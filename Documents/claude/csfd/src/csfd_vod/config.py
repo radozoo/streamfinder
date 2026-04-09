@@ -10,8 +10,8 @@ from typing import Dict, List
 @dataclass
 class ScrapeConfig:
     """Configuration for scraping."""
-    rate_limit_delay_ms: int = 500
-    rate_limit_jitter_ms: int = 200
+    rate_limit_delay_ms: int = 1000  # Increased from 500ms to respect server limits
+    rate_limit_jitter_ms: int = 300   # Increased from 200ms for more variation
     request_timeout_sec: int = 10
     max_retries: int = 3
     user_agents: List[str] = None

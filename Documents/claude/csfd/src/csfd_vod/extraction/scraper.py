@@ -1,6 +1,7 @@
 """VOD scraper with rate limiting and retry logic."""
 
 import random
+import time
 from typing import List, Optional, Dict, Any
 import requests
 from requests.adapters import HTTPAdapter
@@ -10,6 +11,11 @@ from bs4 import BeautifulSoup
 from csfd_vod.extraction.rate_limiter import RateLimiter
 from csfd_vod.logger import get_logger
 
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
 
 logger = get_logger(__name__)
 
@@ -58,6 +64,7 @@ class VODScraper:
     def scrape_vod_list(self, vod_page_url: str) -> List[str]:
         """
         Scrape list of VOD title URLs from the main VOD page.
+        Uses Playwright for JavaScript-heavy pages with bot protection.
 
         Args:
             vod_page_url: URL of the VOD listing page
@@ -65,8 +72,100 @@ class VODScraper:
         Returns:
             List of title page URLs
         """
-        logger.info("scrape_vod_list_start", url=vod_page_url)
+        logger.info("scrape_vod_list_start", url=vod_page_url, method="playwright")
 
+        # Try with Playwright first (handles JS and bot protection)
+        if PLAYWRIGHT_AVAILABLE:
+            try:
+                return self._scrape_vod_list_playwright(vod_page_url)
+            except Exception as e:
+                logger.warning("playwright_failed", error=str(e), fallback_to_requests=True)
+
+        # Fallback to requests
+        return self._scrape_vod_list_requests(vod_page_url)
+
+    def _scrape_vod_list_playwright(self, vod_page_url: str) -> List[str]:
+        """
+        Scrape VOD list using Playwright browser automation.
+        Handles JavaScript rendering and bot protection.
+        """
+        browser = None
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page(
+                    user_agent=self._get_random_user_agent()
+                )
+
+                logger.info("playwright_navigate_start", url=vod_page_url)
+                page.goto(vod_page_url, wait_until="networkidle", timeout=30000)
+
+                # Wait for content to stabilize - wait for either the selector to appear
+                # or timeout after waiting
+                selector = self.selectors.get("vod_page", {}).get("title_link_selector")
+                if not selector:
+                    logger.error("selector_missing", selector_key="vod_page.title_link_selector")
+                    if browser:
+                        browser.close()
+                    return []
+
+                # Wait for at least one element matching the selector, or timeout
+                try:
+                    page.wait_for_selector(selector, timeout=5000)
+                    logger.info("playwright_selector_found", selector=selector)
+                except Exception as e:
+                    logger.warning("selector_not_found_in_page", selector=selector, error=str(e))
+
+                # Wait a bit more for dynamic loading
+                time.sleep(2)
+
+                # Get the rendered HTML
+                try:
+                    html_content = page.content()
+                except Exception as e:
+                    logger.warning("page_content_error", error=str(e))
+                    # Try again after a moment
+                    time.sleep(1)
+                    html_content = page.content()
+
+                soup = BeautifulSoup(html_content, "html.parser")
+
+                title_links = soup.select(selector)
+                title_urls = []
+
+                for link in title_links:
+                    href = link.get("href")
+                    if href:
+                        # Convert relative URLs to absolute
+                        if href.startswith("http"):
+                            title_urls.append(href)
+                        else:
+                            # Determine domain from vod_page_url
+                            if "www.csfd.cz" in vod_page_url:
+                                title_urls.append(f"https://www.csfd.cz{href}")
+                            else:
+                                title_urls.append(f"https://csfd.cz{href}")
+
+                if browser:
+                    browser.close()
+
+                logger.info("scrape_vod_list_success", count=len(title_urls), method="playwright")
+                return title_urls
+
+        except Exception as e:
+            if browser:
+                try:
+                    browser.close()
+                except:
+                    pass
+            logger.error("playwright_scrape_failed", error=str(e), url=vod_page_url)
+            raise
+
+    def _scrape_vod_list_requests(self, vod_page_url: str) -> List[str]:
+        """
+        Fallback method using requests library.
+        Works for simple pages without JavaScript.
+        """
         try:
             self.rate_limiter.wait()
             response = self.session.get(
@@ -95,11 +194,11 @@ class VODScraper:
                     else:
                         title_urls.append(f"https://csfd.cz{href}")
 
-            logger.info("scrape_vod_list_success", count=len(title_urls))
+            logger.info("scrape_vod_list_success", count=len(title_urls), method="requests")
             return title_urls
 
         except requests.RequestException as e:
-            logger.error("scrape_vod_list_failed", error=str(e), url=vod_page_url)
+            logger.error("scrape_vod_list_failed", error=str(e), url=vod_page_url, method="requests")
             return []
 
     def scrape_title_details(self, title_url: str) -> Optional[Dict[str, Any]]:
