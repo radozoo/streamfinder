@@ -1,0 +1,50 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "csfd-vod-pipeline"
+version = "0.1.0"
+description = "Modular VOD scraping pipeline for csfd.cz with PostgreSQL backend and D3.js dashboard"
+requires-python = ">=3.9"
+authors = [{name = "radozoo"}]
+license = {text = "MIT"}
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+requests = "^2.31"
+beautifulsoup4 = "^4.12"
+psycopg2-binary = "^2.9"
+sqlalchemy = "^2.0"
+pydantic = "^2.0"
+python-dotenv = "^1.0"
+structlog = "^23.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0"
+pytest-cov = "^4.0"
+black = "^23.0"
+ruff = "^0.1"
+mypy = "^1.0"
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=src/csfd_vod --cov-report=term-missing"
