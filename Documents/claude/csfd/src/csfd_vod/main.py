@@ -15,7 +15,7 @@ from csfd_vod.loading.postgres_loader import PostgresLoader
 logger = get_logger(__name__)
 
 
-def run_pipeline(vod_page_url: str = "https://csfd.cz/vod/", dry_run: bool = False) -> dict:
+def run_pipeline(vod_page_url: Optional[str] = None, dry_run: bool = False) -> dict:
     """
     Execute the full VOD scraping pipeline.
 
@@ -33,6 +33,10 @@ def run_pipeline(vod_page_url: str = "https://csfd.cz/vod/", dry_run: bool = Fal
         # Load configuration
         config = load_config_from_env()
         selectors = load_selectors(config.selectors_path)
+
+        # Use URL from selectors config if not provided
+        if vod_page_url is None:
+            vod_page_url = selectors.get("vod_page", {}).get("url", "https://www.csfd.cz/vod/")
 
         # Initialize components
         rate_limiter = RateLimiter(
@@ -124,8 +128,8 @@ def main():
     parser = argparse.ArgumentParser(description="CSFD VOD Scraping Pipeline")
     parser.add_argument(
         "--url",
-        default="https://csfd.cz/vod/",
-        help="URL of VOD page to scrape",
+        default=None,
+        help="URL of VOD page to scrape (default: from config/selectors.json)",
     )
     parser.add_argument(
         "--dry-run",
