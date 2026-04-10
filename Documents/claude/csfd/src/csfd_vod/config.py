@@ -49,6 +49,7 @@ class PipelineConfig:
     database: DatabaseConfig
     selectors_path: str = "config/selectors.json"
     log_level: str = "INFO"
+    cache_dir: str = "cache"
 
 
 def load_selectors(path: str) -> Dict:
@@ -80,4 +81,5 @@ def load_config_from_env() -> PipelineConfig:
         database=db_config,
         selectors_path=os.getenv("SELECTORS_PATH", "config/selectors.json"),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
+        cache_dir=os.getenv("CACHE_DIR", "cache"),
     )

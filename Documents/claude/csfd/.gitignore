@@ -45,6 +45,9 @@ htmlcov/
 *.sqlite
 postgres_data/
 
+# HTML cache (top-level only, not src/csfd_vod/cache/ module)
+/cache/
+
 # OS
 .DS_Store
 Thumbs.db
