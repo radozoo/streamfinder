@@ -77,9 +77,15 @@ class VODTitleParser:
             data["title"] = title_elem.get_text(strip=True)
 
         # --- English/original title — .film-header-name .film-names li (first <li>) ---
+        # Exclude <a> link text (e.g. "více" expand link appended by get_text)
         names_list = soup.select(".film-header-name .film-names li")
         if names_list:
-            data["title_en"] = names_list[0].get_text(strip=True) or None
+            li = names_list[0]
+            title_en = "".join(
+                s for s in li.strings
+                if s.strip().lower() not in ("více", "more", "")
+            ).strip()
+            data["title_en"] = title_en or None
 
         # --- Year + Country (optional) — both from .origin text ---
         # Structure: "USA / Velká Británie, (2021–2026), 24 h ..."
@@ -218,6 +224,10 @@ class VODTitleParser:
             })
         if reviews:
             data["reviews"] = json.dumps(reviews, ensure_ascii=False)
+
+        # --- Default title_type to "film" if no type span and not a child URL ---
+        if not data.get("title_type"):
+            data["title_type"] = "film"
 
         # --- scraped_at — current timestamp (UTC) ---
         data["scraped_at"] = datetime.now(timezone.utc)

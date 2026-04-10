@@ -34,10 +34,10 @@ class VODListParser:
         results = []
         current_date: Optional[date] = None
 
-        for elem in soup.select(".box-sub-header, article.article"):
+        for elem in soup.select(".update-box-sub-header, article.article"):
             classes = elem.get("class", [])
 
-            if "box-sub-header" in classes or elem.select_one(".date-title"):
+            if "update-box-sub-header" in classes or elem.select_one(".date-title"):
                 date_elem = elem.select_one(".date-title") or elem
                 current_date = self._parse_vod_date(date_elem.get_text(strip=True))
                 continue

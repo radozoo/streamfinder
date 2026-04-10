@@ -87,7 +87,7 @@ SAMPLE_HTML_CHILD_URL = """
 SAMPLE_LIST_HTML = """
 <html>
 <body>
-    <div class="box-sub-header">
+    <div class="update-box-sub-header update-box-sub-header-date">
         <h2 class="date-title">V nabídce od 5. 4. 2026</h2>
     </div>
     <article class="article">
