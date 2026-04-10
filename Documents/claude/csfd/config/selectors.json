@@ -9,12 +9,12 @@
     "title_link_selector": "a[href*='/film/']"
   },
   "title_page": {
-    "title_selector": "h1.title",
-    "year_selector": "span.year",
-    "genre_selector": "span.genre",
-    "director_selector": "a[data-role='director']",
-    "actors_selector": "a[data-role='actor']",
-    "country_selector": "span.country",
-    "vod_selector": "span.vod-platform"
+    "title_selector": ".film-header h1",
+    "year_selector": "[data-qa='release-date']",
+    "genre_selector": ".genres a",
+    "director_selector": "a[href*='/osoba/'][data-qa*='director']",
+    "actors_selector": "a[href*='/osoba/'][data-qa*='actor']",
+    "country_selector": ".film-data a[href*='/zeme/']",
+    "vod_selector": ".vod-platform"
   }
 }

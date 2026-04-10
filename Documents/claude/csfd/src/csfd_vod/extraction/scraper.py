@@ -161,6 +161,70 @@ class VODScraper:
             logger.error("playwright_scrape_failed", error=str(e), url=vod_page_url)
             raise
 
+    def _scrape_title_details_playwright(self, title_url: str) -> Optional[str]:
+        """
+        Scrape film detail page using Playwright browser automation.
+        Handles JavaScript rendering and bot protection for individual film pages.
+
+        Args:
+            title_url: URL of the film detail page
+
+        Returns:
+            Rendered HTML content as string, or None if scraping fails
+        """
+        browser = None
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                page = browser.new_page(
+                    user_agent=self._get_random_user_agent()
+                )
+
+                logger.info("playwright_navigate_title_start", url=title_url)
+                page.goto(title_url, wait_until="networkidle", timeout=30000)
+
+                # Wait for mandatory title selector to appear (confirms page loaded correctly)
+                selector = self.selectors.get("title_page", {}).get("title_selector")
+                if not selector:
+                    logger.error("selector_missing", selector_key="title_page.title_selector")
+                    if browser:
+                        browser.close()
+                    return None
+
+                # Wait for at least the title element, or timeout
+                try:
+                    page.wait_for_selector(selector, timeout=5000)
+                    logger.info("playwright_title_selector_found", selector=selector)
+                except Exception as e:
+                    logger.warning("title_selector_not_found_in_page", selector=selector, error=str(e))
+
+                # Wait a bit more for dynamic content to load
+                time.sleep(2)
+
+                # Get the rendered HTML
+                try:
+                    html_content = page.content()
+                except Exception as e:
+                    logger.warning("page_content_error_title", error=str(e))
+                    # Try again after a moment
+                    time.sleep(1)
+                    html_content = page.content()
+
+                if browser:
+                    browser.close()
+
+                logger.info("scrape_title_details_success", url=title_url, method="playwright", html_length=len(html_content))
+                return html_content
+
+        except Exception as e:
+            if browser:
+                try:
+                    browser.close()
+                except:
+                    pass
+            logger.error("playwright_title_scrape_failed", error=str(e), url=title_url)
+            return None
+
     def _scrape_vod_list_requests(self, vod_page_url: str) -> List[str]:
         """
         Fallback method using requests library.
@@ -201,18 +265,31 @@ class VODScraper:
             logger.error("scrape_vod_list_failed", error=str(e), url=vod_page_url, method="requests")
             return []
 
-    def scrape_title_details(self, title_url: str) -> Optional[Dict[str, Any]]:
+    def scrape_title_details(self, title_url: str) -> Optional[str]:
         """
-        Scrape full details for a single title.
+        Scrape HTML content for a single title page.
+        Uses Playwright for JavaScript-heavy pages with bot protection.
 
         Args:
             title_url: URL of the title page
 
         Returns:
-            Dict with extracted fields or None if parsing fails
+            Rendered HTML content as string, or None if all attempts fail
         """
         for attempt in range(3):
             try:
+                # Try with Playwright first (handles JS and bot protection)
+                if PLAYWRIGHT_AVAILABLE:
+                    try:
+                        self.rate_limiter.wait()
+                        html_content = self._scrape_title_details_playwright(title_url)
+                        if html_content:
+                            logger.info("scrape_title_details_success", url=title_url, method="playwright")
+                            return html_content
+                    except Exception as e:
+                        logger.warning("playwright_title_failed", error=str(e), fallback_to_requests=True)
+
+                # Fallback to requests
                 self.rate_limiter.wait()
                 response = self.session.get(
                     title_url,
@@ -220,22 +297,21 @@ class VODScraper:
                     timeout=10,
                 )
                 response.raise_for_status()
-
-                soup = BeautifulSoup(response.content, "html.parser")
-                return self._extract_title_details(soup, title_url)
+                logger.info("scrape_title_details_success", url=title_url, method="requests")
+                return response.text
 
             except requests.Timeout:
                 if attempt < 2:
                     wait_time = self.rate_limiter.get_backoff(attempt)
                     logger.warning(
-                        "scrape_timeout_retry",
+                        "scrape_title_timeout_retry",
                         url=title_url,
                         attempt=attempt + 1,
                         wait_sec=wait_time,
                     )
                 else:
                     logger.warning(
-                        "scrape_timeout_final",
+                        "scrape_title_timeout_final",
                         url=title_url,
                         attempts=3,
                     )
@@ -243,7 +319,7 @@ class VODScraper:
 
             except requests.RequestException as e:
                 logger.warning(
-                    "scrape_request_error",
+                    "scrape_title_request_error",
                     url=title_url,
                     error=str(e),
                     attempt=attempt + 1,

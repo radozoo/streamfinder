@@ -67,11 +67,12 @@ def run_pipeline(vod_page_url: Optional[str] = None, dry_run: bool = False) -> d
             if i % 100 == 0:
                 logger.info("stage_parse_progress", run_id=run_id, count=i, total=len(title_urls))
 
-            html_content = scraper.session.get(url).text
-            title = parser.parse(html_content, url)
+            html_content = scraper.scrape_title_details(url)
+            if html_content:
+                title = parser.parse(html_content, url)
 
-            if title:
-                parsed_titles.append(title)
+                if title:
+                    parsed_titles.append(title)
 
         logger.info("stage_parse_complete", run_id=run_id, parsed=len(parsed_titles), failed=len(title_urls) - len(parsed_titles))
 
