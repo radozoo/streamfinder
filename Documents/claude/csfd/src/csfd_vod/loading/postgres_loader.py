@@ -145,11 +145,30 @@ class PostgresLoader:
         try:
             insert_sql = text("""
                 INSERT INTO csfd_vod.fact_titles
-                    (url_id, title, year, director, actors, link, date_added, run_id, updated_at)
+                    (url_id, title, year, director, actors, link, date_added, run_id, updated_at,
+                     title_en, plot, rating, image_url, title_type, parent_url,
+                     vod_date, distributor, premiere_detail, reviews, scraped_at)
                 VALUES
-                    (:url_id, :title, :year, :director, :actors, :link, :date_added, :run_id, CURRENT_TIMESTAMP)
+                    (:url_id, :title, :year, :director, :actors, :link, :date_added, :run_id, CURRENT_TIMESTAMP,
+                     :title_en, :plot, :rating, :image_url, :title_type, :parent_url,
+                     :vod_date, :distributor, :premiere_detail, :reviews::jsonb, :scraped_at)
                 ON CONFLICT (url_id)
                 DO UPDATE SET
+                    title = EXCLUDED.title,
+                    year = EXCLUDED.year,
+                    director = EXCLUDED.director,
+                    actors = EXCLUDED.actors,
+                    title_en = EXCLUDED.title_en,
+                    plot = EXCLUDED.plot,
+                    rating = EXCLUDED.rating,
+                    image_url = EXCLUDED.image_url,
+                    title_type = EXCLUDED.title_type,
+                    parent_url = EXCLUDED.parent_url,
+                    vod_date = COALESCE(EXCLUDED.vod_date, csfd_vod.fact_titles.vod_date),
+                    distributor = COALESCE(EXCLUDED.distributor, csfd_vod.fact_titles.distributor),
+                    premiere_detail = EXCLUDED.premiere_detail,
+                    reviews = EXCLUDED.reviews,
+                    scraped_at = EXCLUDED.scraped_at,
                     updated_at = CURRENT_TIMESTAMP,
                     run_id = :run_id
                 RETURNING title_id
@@ -166,6 +185,17 @@ class PostgresLoader:
                     "link": title.link,
                     "date_added": title.date_added,
                     "run_id": run_id,
+                    "title_en": title.title_en,
+                    "plot": title.plot,
+                    "rating": title.rating,
+                    "image_url": title.image_url,
+                    "title_type": title.title_type,
+                    "parent_url": title.parent_url,
+                    "vod_date": title.vod_date,
+                    "distributor": title.distributor,
+                    "premiere_detail": title.premiere_detail,
+                    "reviews": title.reviews,
+                    "scraped_at": title.scraped_at,
                 },
             )
 
@@ -247,6 +277,62 @@ class PostgresLoader:
                                 ON CONFLICT (title_id, vod_platform) DO NOTHING
                             """),
                             {"title_id": title_id, "vod_platform": vod},
+                        )
+
+            # Tags
+            if title.tags:
+                for tag in title.tags.split(", "):
+                    tag = tag.strip()
+                    if tag:
+                        session.execute(
+                            text("""
+                                INSERT INTO csfd_vod.dim_tags (title_id, tag)
+                                VALUES (:title_id, :tag)
+                                ON CONFLICT (title_id, tag) DO NOTHING
+                            """),
+                            {"title_id": title_id, "tag": tag},
+                        )
+
+            # Screenwriters
+            if title.script:
+                for name in title.script.split(", "):
+                    name = name.strip()
+                    if name:
+                        session.execute(
+                            text("""
+                                INSERT INTO csfd_vod.dim_screenwriters (title_id, screenwriter)
+                                VALUES (:title_id, :screenwriter)
+                                ON CONFLICT (title_id, screenwriter) DO NOTHING
+                            """),
+                            {"title_id": title_id, "screenwriter": name},
+                        )
+
+            # Cinematographers
+            if title.camera:
+                for name in title.camera.split(", "):
+                    name = name.strip()
+                    if name:
+                        session.execute(
+                            text("""
+                                INSERT INTO csfd_vod.dim_cinematographers (title_id, cinematographer)
+                                VALUES (:title_id, :cinematographer)
+                                ON CONFLICT (title_id, cinematographer) DO NOTHING
+                            """),
+                            {"title_id": title_id, "cinematographer": name},
+                        )
+
+            # Composers
+            if title.music:
+                for name in title.music.split(", "):
+                    name = name.strip()
+                    if name:
+                        session.execute(
+                            text("""
+                                INSERT INTO csfd_vod.dim_composers (title_id, composer)
+                                VALUES (:title_id, :composer)
+                                ON CONFLICT (title_id, composer) DO NOTHING
+                            """),
+                            {"title_id": title_id, "composer": name},
                         )
 
         except Exception as e:

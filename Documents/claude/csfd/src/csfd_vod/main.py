@@ -11,6 +11,7 @@ from csfd_vod.logger import setup_logging, get_logger
 from csfd_vod.extraction.scraper import VODScraper
 from csfd_vod.extraction.rate_limiter import RateLimiter
 from csfd_vod.transformation.parser import VODTitleParser
+from csfd_vod.transformation.list_parser import VODListParser
 from csfd_vod.loading.postgres_loader import PostgresLoader
 from csfd_vod.cache import HTMLCache
 
@@ -59,7 +60,8 @@ def cmd_harvest(args) -> dict:
     selectors = load_selectors(config.selectors_path)
     scraper = _make_scraper(config, selectors)
 
-    urls = scraper.scrape_vod_all_urls(from_year=args.from_year)
+    list_html_dir = Path(config.cache_dir) / "vod_lists"
+    urls = scraper.scrape_vod_all_urls(from_year=args.from_year, list_html_dir=list_html_dir)
 
     vod_urls_path = Path(config.cache_dir) / "vod_urls.json"
     vod_urls_path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,6 +166,34 @@ def cmd_parse(args) -> dict:
     if not parsed_titles:
         logger.error("cmd_parse_failed", run_id=run_id, reason="no_titles_parsed")
         return {"success": False, "run_id": run_id, "stage": "parse"}
+
+    # Merge list-page metadata (vod_date, distributor, list_type) into parsed titles
+    list_html_dir = Path(config.cache_dir) / "vod_lists"
+    if list_html_dir.exists():
+        list_parser = VODListParser()
+        # Build url → title index for fast lookup
+        title_by_url = {t.url_id: t for t in parsed_titles}
+        list_pages = sorted(list_html_dir.glob("*.html"))
+        logger.info("stage_list_parse_start", run_id=run_id, list_pages=len(list_pages))
+        matched = 0
+        for list_page in list_pages:
+            try:
+                html = list_page.read_text(encoding="utf-8")
+                entries = list_parser.parse(html, source=list_page.name)
+                for entry in entries:
+                    film_url = entry.get("film_url")
+                    if film_url and film_url in title_by_url:
+                        t = title_by_url[film_url]
+                        if not t.vod_date and entry.get("vod_date"):
+                            t.vod_date = entry["vod_date"]
+                        if not t.distributor and entry.get("distributor"):
+                            t.distributor = entry["distributor"]
+                        if not t.title_type and entry.get("list_type"):
+                            t.title_type = entry["list_type"]
+                        matched += 1
+            except Exception as e:
+                logger.warning("list_page_parse_error", path=str(list_page), error=str(e))
+        logger.info("stage_list_parse_complete", run_id=run_id, matched=matched)
 
     if args.dry_run:
         logger.info("dry_run_complete", run_id=run_id, parsed=len(parsed_titles))

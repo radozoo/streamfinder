@@ -1,6 +1,6 @@
 """Data models for VOD titles with Pydantic validation."""
 
-from datetime import datetime
+from datetime import datetime, date, timezone
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
@@ -17,7 +17,24 @@ class VODTitle(BaseModel):
     countries: Optional[str] = Field(None, description="Countries (forward-slash separated)")
     vod_platforms: Optional[str] = Field(None, description="VOD platforms (comma-separated)")
     link: str = Field(..., description="Full csfd.cz URL")
-    date_added: datetime = Field(default_factory=datetime.utcnow, description="When added to VOD")
+    date_added: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="When added to VOD")
+
+    # New fields from parser rewrite (2026-04-10)
+    title_en: Optional[str] = Field(None, description="English/original title")
+    plot: Optional[str] = Field(None, description="Film synopsis/description")
+    rating: Optional[int] = Field(None, description="CSFD rating 0-100, NULL if unrated")
+    image_url: Optional[str] = Field(None, description="Poster image URL")
+    title_type: Optional[str] = Field(None, description="'film', 'serial', 'seria', 'epizoda'")
+    parent_url: Optional[str] = Field(None, description="Parent film/serial URL for child titles")
+    script: Optional[str] = Field(None, description="Screenwriters (comma-separated)")
+    camera: Optional[str] = Field(None, description="Cinematographers (comma-separated)")
+    music: Optional[str] = Field(None, description="Composers (comma-separated)")
+    tags: Optional[str] = Field(None, description="User tags (comma-separated)")
+    reviews: Optional[str] = Field(None, description="JSON string [{author, text, stars}]")
+    vod_date: Optional[date] = Field(None, description="VOD availability date from list page")
+    distributor: Optional[str] = Field(None, description="VOD distributor from list page")
+    premiere_detail: Optional[str] = Field(None, description="Raw 'Na VOD od...' text")
+    scraped_at: Optional[datetime] = Field(None, description="When HTML was downloaded")
 
     @field_validator("year")
     @classmethod
@@ -41,6 +58,14 @@ class VODTitle(BaseModel):
         """Validate URL is valid."""
         if not v or not v.startswith("http"):
             raise ValueError("url_id must be a valid HTTP(S) URL")
+        return v
+
+    @field_validator("rating")
+    @classmethod
+    def validate_rating(cls, v: Optional[int]) -> Optional[int]:
+        """Validate rating is 0-100."""
+        if v is not None and (v < 0 or v > 100):
+            raise ValueError(f"Rating out of range: {v}")
         return v
 
     model_config = ConfigDict(use_enum_values=True)
