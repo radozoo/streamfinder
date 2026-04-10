@@ -14,6 +14,8 @@ from csfd_vod.transformation.parser import VODTitleParser
 from csfd_vod.transformation.list_parser import VODListParser
 from csfd_vod.loading.postgres_loader import PostgresLoader
 from csfd_vod.cache import HTMLCache
+from csfd_vod.export.exporter import DataExporter
+from csfd_vod.export.dashboard_generator import DashboardGenerator
 
 
 logger = get_logger(__name__)
@@ -292,6 +294,43 @@ def run_pipeline(vod_page_url: Optional[str] = None, dry_run: bool = False) -> d
 
 
 # ---------------------------------------------------------------------------
+# Command: dashboard — export JSON files + generate HTML dashboard
+# ---------------------------------------------------------------------------
+
+def cmd_dashboard(args) -> dict:
+    """Export pre-aggregated JSON files and generate HTML dashboard."""
+    config = load_config_from_env()
+    output_dir = Path(args.output_dir)
+    data_dir = output_dir / "data"
+
+    logger.info("cmd_dashboard_start", output_dir=str(output_dir))
+
+    try:
+        # Step 1: Export JSON files to dashboard/data/
+        exporter = DataExporter(config.database.connection_string)
+        export_stats = exporter.export(str(data_dir))
+        logger.info("dashboard_data_exported", **export_stats)
+
+        # Step 2: Generate HTML dashboard
+        generator = DashboardGenerator()
+        html_path = output_dir / "index.html"
+        gen_stats = generator.generate(str(data_dir), str(html_path))
+        logger.info("dashboard_html_generated", **gen_stats)
+
+        return {
+            "success": True,
+            "output_dir": str(output_dir.absolute()),
+            "html_path": str(html_path.absolute()),
+            "files_written": export_stats["files_written"],
+            "total_titles": export_stats["total_titles"],
+        }
+
+    except Exception as e:
+        logger.error("cmd_dashboard_failed", error=str(e))
+        return {"success": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -324,6 +363,12 @@ def main():
     p_run.add_argument("--url", default=None, help="Override VOD listing URL")
     p_run.add_argument("--dry-run", action="store_true", help="Scrape and parse but don't load to database")
 
+    # -- dashboard --
+    p_dashboard = subparsers.add_parser("dashboard", help="Export JSON data files + generate HTML dashboard")
+    p_dashboard.add_argument(
+        "--output-dir", default="dashboard", help="Output directory (default: dashboard/)"
+    )
+
     args = parser.parse_args()
     setup_logging(args.log_level)
 
@@ -335,6 +380,8 @@ def main():
         result = cmd_parse(args)
     elif args.command == "run":
         result = run_pipeline(vod_page_url=args.url, dry_run=args.dry_run)
+    elif args.command == "dashboard":
+        result = cmd_dashboard(args)
 
     if result.get("success"):
         logger.info("command_success", command=args.command, result=result)
