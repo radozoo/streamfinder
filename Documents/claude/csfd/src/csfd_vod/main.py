@@ -1,7 +1,9 @@
 """Main pipeline orchestration."""
 
+import json
 import uuid
 import argparse
+from pathlib import Path
 from typing import Optional
 
 from csfd_vod.config import load_config_from_env, load_selectors
@@ -45,6 +47,29 @@ def _load_to_db(parsed_titles, config, run_id):
 
 
 # ---------------------------------------------------------------------------
+# Command: harvest — collect all VOD title URLs via monthly iteration
+# ---------------------------------------------------------------------------
+
+def cmd_harvest(args) -> dict:
+    """Iterate all months from --from-year to today, collect unique VOD title URLs."""
+    run_id = str(uuid.uuid4())
+    logger.info("cmd_harvest_start", run_id=run_id, from_year=args.from_year)
+
+    config = load_config_from_env()
+    selectors = load_selectors(config.selectors_path)
+    scraper = _make_scraper(config, selectors)
+
+    urls = scraper.scrape_vod_all_urls(from_year=args.from_year)
+
+    vod_urls_path = Path(config.cache_dir) / "vod_urls.json"
+    vod_urls_path.parent.mkdir(parents=True, exist_ok=True)
+    vod_urls_path.write_text(json.dumps(urls, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    logger.info("cmd_harvest_complete", run_id=run_id, count=len(urls), path=str(vod_urls_path))
+    return {"success": True, "run_id": run_id, "count": len(urls), "path": str(vod_urls_path)}
+
+
+# ---------------------------------------------------------------------------
 # Command: scrape — download HTML to cache
 # ---------------------------------------------------------------------------
 
@@ -56,15 +81,19 @@ def cmd_scrape(args) -> dict:
     config = load_config_from_env()
     selectors = load_selectors(config.selectors_path)
 
-    vod_page_url = args.url or selectors.get("vod_page", {}).get("url", "https://www.csfd.cz/vod/")
-
     scraper = _make_scraper(config, selectors)
     cache = HTMLCache(config.cache_dir)
 
-    # Stage 1: get URL list
-    logger.info("stage_scrape_start", run_id=run_id)
-    title_urls = scraper.scrape_vod_list(vod_page_url)
-    logger.info("stage_scrape_complete", run_id=run_id, count=len(title_urls))
+    # Stage 1: get URL list — prefer harvested list, fall back to live scrape
+    vod_urls_path = Path(config.cache_dir) / "vod_urls.json"
+    if vod_urls_path.exists():
+        title_urls = json.loads(vod_urls_path.read_text(encoding="utf-8"))
+        logger.info("stage_scrape_start", run_id=run_id, url_source="vod_urls_json", count=len(title_urls))
+    else:
+        vod_page_url = args.url or selectors.get("vod_page", {}).get("url", "https://www.csfd.cz/vod/")
+        logger.info("stage_scrape_start", run_id=run_id, url_source="live_scrape")
+        title_urls = scraper.scrape_vod_list(vod_page_url)
+        logger.info("stage_scrape_complete", run_id=run_id, count=len(title_urls))
 
     if not title_urls:
         logger.error("stage_scrape_failed", run_id=run_id, reason="no_titles_found")
@@ -248,6 +277,10 @@ def main():
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # -- harvest --
+    p_harvest = subparsers.add_parser("harvest", help="Collect all VOD title URLs by iterating months")
+    p_harvest.add_argument("--from-year", type=int, default=2015, help="Start year for month iteration (default: 2015)")
+
     # -- scrape --
     p_scrape = subparsers.add_parser("scrape", help="Download HTML pages to cache (no parsing)")
     p_scrape.add_argument("--url", default=None, help="Override VOD listing URL")
@@ -264,7 +297,9 @@ def main():
     args = parser.parse_args()
     setup_logging(args.log_level)
 
-    if args.command == "scrape":
+    if args.command == "harvest":
+        result = cmd_harvest(args)
+    elif args.command == "scrape":
         result = cmd_scrape(args)
     elif args.command == "parse":
         result = cmd_parse(args)

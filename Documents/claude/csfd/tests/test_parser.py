@@ -9,28 +9,32 @@ SAMPLE_HTML = """
 <html>
 <head><title>Test Title</title></head>
 <body>
-    <h1 class="title">The Matrix</h1>
-    <span class="year">(1999)</span>
-    <span class="genre">Science Fiction</span>
-    <span class="genre">Action</span>
-    <a data-role="director">Lana Wachowski</a>
-    <a data-role="actor">Keanu Reeves</a>
-    <a data-role="actor">Laurence Fishburne</a>
-    <span class="country">USA</span>
-    <span class="vod-platform">Netflix</span>
+    <div class="film-header"><h1>The Matrix</h1></div>
+    <div class="origin">USA <span class="bullet"></span>
+        <span>(1999) <span class="bullet"></span></span>2 h 16 min
+    </div>
+    <div class="genres"><a href="/zaner/1/">Science Fiction</a> / <a href="/zaner/2/">Action</a></div>
+    <div>
+        <h4>Režie:</h4>
+        <a href="/tvurce/1-lana-wachowski/prehled/">Lana Wachowski</a>,
+        <a href="/tvurce/2-lilly-wachowski/prehled/">Lilly Wachowski</a>
+    </div>
+    <div>
+        <h4>Hrají:</h4>
+        <a href="/tvurce/3-keanu-reeves/prehled/">Keanu Reeves</a>,
+        <a href="/tvurce/4-laurence-fishburne/prehled/">Laurence Fishburne</a>
+    </div>
+    <div class="film-vod-list">
+        <a href="/vod/netflix/">Netflix</a>
+    </div>
 </body>
 </html>
 """
 
 SELECTORS = {
     "title_page": {
-        "title_selector": "h1.title",
-        "year_selector": "span.year",
-        "genre_selector": "span.genre",
-        "director_selector": "a[data-role='director']",
-        "actors_selector": "a[data-role='actor']",
-        "country_selector": "span.country",
-        "vod_selector": "span.vod-platform",
+        "title_selector": ".film-header h1",
+        "genre_selector": ".genres a",
     }
 }
 
@@ -52,11 +56,15 @@ def test_parser_extracts_title(parser):
 
 
 def test_parser_extracts_year(parser):
-    """Test that parser extracts year correctly."""
+    """Test that parser extracts year from .origin div."""
     url = "https://csfd.cz/film/1/the-matrix/"
     result = parser.parse(SAMPLE_HTML, url)
 
     assert result.year == 1999
+    assert result.countries == "USA"
+    assert result.director == "Lana Wachowski, Lilly Wachowski"
+    assert result.actors == "Keanu Reeves, Laurence Fishburne"
+    assert result.vod_platforms == "Netflix"
 
 
 def test_parser_handles_missing_title(parser):

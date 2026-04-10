@@ -1,7 +1,9 @@
 """VOD scraper with rate limiting and retry logic."""
 
+import re
 import random
 import time
+from datetime import date
 from typing import List, Optional, Dict, Any
 import requests
 from requests.adapters import HTTPAdapter
@@ -83,6 +85,85 @@ class VODScraper:
 
         # Fallback to requests
         return self._scrape_vod_list_requests(vod_page_url)
+
+    # Matches film/series overview URLs like /film/12345-slug/prehled/
+    # Excludes episode sub-pages (/film/12345/67890-epizoda/prehled/) and review pages
+    _TITLE_OVERVIEW_RE = re.compile(
+        r'^https://www\.csfd\.cz/film/\d+[^/]*/prehled/$'
+    )
+
+    def _is_title_overview_url(self, url: str) -> bool:
+        """Return True only for film/series overview pages, not episodes or reviews."""
+        return bool(self._TITLE_OVERVIEW_RE.match(url))
+
+    def scrape_vod_month_page(self, year: int, month: int, page: int = 1) -> List[str]:
+        """
+        Scrape film URLs from a single month-page of the VOD listing.
+
+        Args:
+            year: Calendar year (e.g. 2023)
+            month: Calendar month 1-12
+            page: Pagination index (1-based)
+
+        Returns:
+            List of absolute film URLs found on this page (may be empty).
+        """
+        url = f"https://www.csfd.cz/vod/?year={year}&month={month}&range=month&page={page}"
+        self.rate_limiter.wait()
+        logger.info("scrape_month_page_start", year=year, month=month, page=page)
+
+        if PLAYWRIGHT_AVAILABLE:
+            try:
+                urls = self._scrape_vod_list_playwright(url)
+                logger.info("scrape_month_page_complete", year=year, month=month, page=page, count=len(urls))
+                return urls
+            except Exception as e:
+                logger.warning("playwright_month_page_failed", year=year, month=month, page=page, error=str(e))
+
+        urls = self._scrape_vod_list_requests(url)
+        logger.info("scrape_month_page_complete", year=year, month=month, page=page, count=len(urls), method="requests")
+        return urls
+
+    def scrape_vod_all_urls(self, from_year: int = 2015) -> List[str]:
+        """
+        Collect all VOD title URLs by iterating every month from from_year to today.
+
+        Handles pagination within each month: keeps fetching page=N until a page
+        returns no new URLs.  Deduplicates across all months.
+
+        Args:
+            from_year: First year to include (default 2015)
+
+        Returns:
+            Sorted list of unique film URLs.
+        """
+        seen: set = set()
+        today = date.today()
+
+        year, month = from_year, 1
+        while (year, month) <= (today.year, today.month):
+            page = 1
+            while True:
+                urls = self.scrape_vod_month_page(year, month, page)
+                overview_urls = [u for u in urls if self._is_title_overview_url(u)]
+                new_urls = [u for u in overview_urls if u not in seen]
+                seen.update(new_urls)
+                if not new_urls:
+                    break  # no new URLs on this page (empty or all duplicates) → done with this month
+                page += 1
+
+            logger.info("harvest_month_complete", year=year, month=month, total_unique=len(seen))
+
+            # advance to next month
+            if month == 12:
+                year += 1
+                month = 1
+            else:
+                month += 1
+
+        result = sorted(seen)
+        logger.info("harvest_all_complete", total_unique=len(result))
+        return result
 
     def _scrape_vod_list_playwright(self, vod_page_url: str) -> List[str]:
         """
