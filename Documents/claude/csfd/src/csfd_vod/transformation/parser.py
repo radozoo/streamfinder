@@ -1,6 +1,8 @@
 """VOD title parser using BeautifulSoup."""
 
+import json
 import re
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from bs4 import BeautifulSoup
 
@@ -52,62 +54,172 @@ class VODTitleParser:
             logger.error("parse_exception", url=url, error=str(e))
             return None
 
+    def _extract_crew(self, soup: BeautifulSoup, label: str) -> Optional[str]:
+        """Extract crew names by h4 label (e.g. 'Scénář:', 'Kamera:', 'Hudba:')."""
+        h4 = soup.find("h4", string=label)
+        if h4:
+            names = [
+                a.get_text(strip=True)
+                for a in h4.parent.select("a")
+                if a.get_text(strip=True).lower() not in ("více", "")
+            ]
+            return ", ".join(names) if names else None
+        return None
+
     def _extract_fields(self, soup: BeautifulSoup, url: str) -> Dict[str, Any]:
-        """Extract fields from BeautifulSoup object using CSFD HTML structure."""
-        data = {"url_id": url}
+        """Extract all 18 fields from detail page HTML."""
+        data = {"url_id": url, "link": url}
 
-        # Title (mandatory) — .film-header h1
-        title_selector = self.selectors.get("title_page", {}).get("title_selector")
-        if title_selector:
-            title_elem = soup.select_one(title_selector)
-            if title_elem:
-                data["title"] = title_elem.get_text(strip=True)
+        # --- Title (mandatory) — .film-header h1 ---
+        title_selector = self.selectors.get("title_page", {}).get("title_selector", ".film-header h1")
+        title_elem = soup.select_one(title_selector)
+        if title_elem:
+            data["title"] = title_elem.get_text(strip=True)
 
-        # Year + Country (optional) — both from .origin text
-        # Structure: "USA <bullet> (2021–2026) <bullet> 24 h ..."
+        # --- English/original title — .film-header-name .film-names li (first <li>) ---
+        names_list = soup.select(".film-header-name .film-names li")
+        if names_list:
+            data["title_en"] = names_list[0].get_text(strip=True) or None
+
+        # --- Year + Country (optional) — both from .origin text ---
+        # Structure: "USA / Velká Británie, (2021–2026), 24 h ..."
         origin = soup.select_one(".origin")
         if origin:
             origin_text = origin.get_text()
-            # Year: first 4-digit year found (start year for series)
+            # Year: first 4-digit year
             years = re.findall(r"(?:19|20)\d{2}", origin_text)
             if years:
                 data["year"] = int(years[0])
-            # Country: text before the first "(" (strip bullets/whitespace)
+            # Country: text before the first digit or "(" (strip bullets/whitespace)
             country_raw = re.split(r"[\(\d]", origin_text)[0]
-            country = re.sub(r"\s+", " ", country_raw).strip()
+            country = re.sub(r"[,\s]+$", "", re.sub(r"\s+", " ", country_raw).strip())
             if country:
                 data["countries"] = country
 
-        # Genres (optional) — .genres a
-        genre_selector = self.selectors.get("title_page", {}).get("genre_selector")
-        if genre_selector:
-            genre_elems = soup.select(genre_selector)
-            if genre_elems:
-                genres = " / ".join(e.get_text(strip=True) for e in genre_elems)
-                if genres:
-                    data["genres"] = genres
+        # --- Genres — .genres a ---
+        genre_selector = self.selectors.get("title_page", {}).get("genre_selector", ".genres a")
+        genre_elems = soup.select(genre_selector)
+        if genre_elems:
+            genres = " / ".join(e.get_text(strip=True) for e in genre_elems)
+            if genres:
+                data["genres"] = genres
 
-        # Directors (optional) — <h4>Režie:</h4> sibling <a> links
-        h4_rezii = soup.find("h4", string="Režie:")
-        if h4_rezii:
-            directors = [a.get_text(strip=True) for a in h4_rezii.parent.select("a") if a.get_text(strip=True).lower() != "více"]
-            if directors:
-                data["director"] = ", ".join(directors)
+        # --- Director — <h4>Režie:</h4> sibling <a> links ---
+        director = self._extract_crew(soup, "Režie:")
+        if director:
+            data["director"] = director
 
-        # Actors (optional) — <h4>Hrají:</h4> sibling <a> links
-        h4_hraji = soup.find("h4", string="Hrají:")
-        if h4_hraji:
-            actors = [a.get_text(strip=True) for a in h4_hraji.parent.select("a") if a.get_text(strip=True).lower() != "více"]
-            if actors:
-                data["actors"] = ", ".join(actors)
+        # --- Script — <h4>Scénář:</h4> ---
+        script = self._extract_crew(soup, "Scénář:")
+        if script:
+            data["script"] = script
 
-        # VOD Platforms (optional) — .film-vod-list a (exclude "více" = "more" link)
+        # --- Camera — <h4>Kamera:</h4> ---
+        camera = self._extract_crew(soup, "Kamera:")
+        if camera:
+            data["camera"] = camera
+
+        # --- Music — <h4>Hudba:</h4> ---
+        music = self._extract_crew(soup, "Hudba:")
+        if music:
+            data["music"] = music
+
+        # --- Actors — <h4>Hrají:</h4> sibling <a> links ---
+        actors = self._extract_crew(soup, "Hrají:")
+        if actors:
+            data["actors"] = actors
+
+        # --- Plot — .plot-full, fallback .body--plots ---
+        plot_elem = soup.select_one(".plot-full")
+        if not plot_elem:
+            plot_elem = soup.select_one(".body--plots")
+        if plot_elem:
+            plot_text = plot_elem.get_text(strip=True)
+            if plot_text:
+                data["plot"] = plot_text
+
+        # --- Rating — .film-rating-average text, parse int (NULL if "? %") ---
+        rating_elem = soup.select_one(".film-rating-average")
+        if rating_elem:
+            rating_text = rating_elem.get_text(strip=True)
+            match = re.match(r"(\d+)\s*%", rating_text)
+            if match:
+                data["rating"] = int(match.group(1))
+
+        # --- Tags — .box-tags a ---
+        tag_elems = soup.select(".box-tags a")
+        if tag_elems:
+            tags = ", ".join(t.get_text(strip=True) for t in tag_elems if t.get_text(strip=True))
+            if tags:
+                data["tags"] = tags
+
+        # --- Image URL — img[src*="/film/posters/"] ---
+        img_elem = soup.select_one('img[src*="/film/posters/"]')
+        if img_elem:
+            src = img_elem.get("src")
+            if src:
+                data["image_url"] = src if src.startswith("http") else f"https://www.csfd.cz{src}"
+
+        # --- VOD Platforms — .film-vod-list a (exclude "více" and empty) ---
         vod_links = soup.select(".film-vod-list a")
-        platforms = [a.get_text(strip=True) for a in vod_links if a.get_text(strip=True).lower() not in ("více", "")]
+        platforms = [
+            a.get_text(strip=True)
+            for a in vod_links
+            if a.get_text(strip=True).lower() not in ("více", "")
+        ]
         if platforms:
             data["vod_platforms"] = ", ".join(platforms)
 
-        # Link (same as url_id)
-        data["link"] = url
+        # --- Premiere detail — .updated-box-content-padding containing "Na VOD od" ---
+        for elem in soup.select(".updated-box-content-padding"):
+            text = elem.get_text(strip=True)
+            if "Na VOD od" in text or "na VOD od" in text.lower():
+                data["premiere_detail"] = text
+                break
+
+        # --- Title type — .film-header-name .type span ---
+        type_span = soup.select_one(".film-header-name .type")
+        if type_span:
+            type_text = type_span.get_text(strip=True).strip("()")
+            if type_text:
+                data["title_type"] = type_text.lower()
+
+        # --- Parent URL from child URL pattern ---
+        # /film/{parent_id}/{child_id}-slug/prehled/ → parent = /film/{parent_id}-slug/prehled/
+        child_match = re.match(r"(https://www\.csfd\.cz/film/)(\d+)/(\d+)", url)
+        if child_match:
+            parent_id = child_match.group(2)
+            data["parent_url"] = f"https://www.csfd.cz/film/{parent_id}/prehled/"
+            if not data.get("title_type"):
+                data["title_type"] = "epizoda"
+
+        # --- Reviews (first 3, as JSON) ---
+        review_articles = soup.select("article.article-review")[:3]
+        reviews = []
+        for rev in review_articles:
+            author_el = rev.select_one("a.user-title-name")
+            text_el = next(
+                (p for p in rev.select("p") if len(p.get_text(strip=True)) > 20),
+                None,
+            )
+            stars_el = rev.select_one(".stars")
+            stars = None
+            if stars_el:
+                classes = stars_el.get("class", [])
+                for cls in classes:
+                    m = re.search(r"stars-(\d+)", cls)
+                    if m:
+                        stars = int(m.group(1))
+                        break
+            reviews.append({
+                "author": author_el.get_text(strip=True) if author_el else None,
+                "text": text_el.get_text(strip=True) if text_el else None,
+                "stars": stars,
+            })
+        if reviews:
+            data["reviews"] = json.dumps(reviews, ensure_ascii=False)
+
+        # --- scraped_at — current timestamp (UTC) ---
+        data["scraped_at"] = datetime.now(timezone.utc)
 
         return data

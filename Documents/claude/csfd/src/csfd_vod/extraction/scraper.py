@@ -4,7 +4,8 @@ import re
 import random
 import time
 from datetime import date
-from typing import List, Optional, Dict, Any
+from pathlib import Path
+from typing import List, Optional, Dict, Any, Tuple
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -79,24 +80,27 @@ class VODScraper:
         # Try with Playwright first (handles JS and bot protection)
         if PLAYWRIGHT_AVAILABLE:
             try:
-                return self._scrape_vod_list_playwright(vod_page_url)
+                urls, _ = self._scrape_vod_list_playwright(vod_page_url)
+                return urls
             except Exception as e:
                 logger.warning("playwright_failed", error=str(e), fallback_to_requests=True)
 
         # Fallback to requests
-        return self._scrape_vod_list_requests(vod_page_url)
+        urls, _ = self._scrape_vod_list_requests(vod_page_url)
+        return urls
 
-    # Matches film/series overview URLs like /film/12345-slug/prehled/
-    # Excludes episode sub-pages (/film/12345/67890-epizoda/prehled/) and review pages
+    # Matches film/series/season/episode overview URLs:
+    #   /film/12345-slug/prehled/                     (film or serial)
+    #   /film/12345/67890-slug/prehled/               (seria or epizoda — child URL)
     _TITLE_OVERVIEW_RE = re.compile(
-        r'^https://www\.csfd\.cz/film/\d+[^/]*/prehled/$'
+        r'^https://www\.csfd\.cz/film/\d+[^/]*/(?:\d+[^/]*/)?prehled/$'
     )
 
     def _is_title_overview_url(self, url: str) -> bool:
         """Return True only for film/series overview pages, not episodes or reviews."""
         return bool(self._TITLE_OVERVIEW_RE.match(url))
 
-    def scrape_vod_month_page(self, year: int, month: int, page: int = 1) -> List[str]:
+    def scrape_vod_month_page(self, year: int, month: int, page: int = 1) -> Tuple[List[str], str]:
         """
         Scrape film URLs from a single month-page of the VOD listing.
 
@@ -106,7 +110,7 @@ class VODScraper:
             page: Pagination index (1-based)
 
         Returns:
-            List of absolute film URLs found on this page (may be empty).
+            Tuple of (film_urls, raw_html).
         """
         url = f"https://www.csfd.cz/vod/?year={year}&month={month}&range=month&page={page}"
         self.rate_limiter.wait()
@@ -114,17 +118,17 @@ class VODScraper:
 
         if PLAYWRIGHT_AVAILABLE:
             try:
-                urls = self._scrape_vod_list_playwright(url)
+                urls, html = self._scrape_vod_list_playwright(url)
                 logger.info("scrape_month_page_complete", year=year, month=month, page=page, count=len(urls))
-                return urls
+                return urls, html
             except Exception as e:
                 logger.warning("playwright_month_page_failed", year=year, month=month, page=page, error=str(e))
 
-        urls = self._scrape_vod_list_requests(url)
+        urls, html = self._scrape_vod_list_requests(url)
         logger.info("scrape_month_page_complete", year=year, month=month, page=page, count=len(urls), method="requests")
-        return urls
+        return urls, html
 
-    def scrape_vod_all_urls(self, from_year: int = 2015) -> List[str]:
+    def scrape_vod_all_urls(self, from_year: int = 2015, list_html_dir: Optional[Path] = None) -> List[str]:
         """
         Collect all VOD title URLs by iterating every month from from_year to today.
 
@@ -133,6 +137,9 @@ class VODScraper:
 
         Args:
             from_year: First year to include (default 2015)
+            list_html_dir: Optional directory to save raw list page HTML files.
+                Files are named {year}_{month:02d}_p{page:02d}.html.
+                Existing files are skipped (resumable).
 
         Returns:
             Sorted list of unique film URLs.
@@ -140,11 +147,19 @@ class VODScraper:
         seen: set = set()
         today = date.today()
 
+        if list_html_dir is not None:
+            list_html_dir.mkdir(parents=True, exist_ok=True)
+
         year, month = from_year, 1
         while (year, month) <= (today.year, today.month):
             page = 1
             while True:
-                urls = self.scrape_vod_month_page(year, month, page)
+                urls, html = self.scrape_vod_month_page(year, month, page)
+                if list_html_dir is not None:
+                    page_path = list_html_dir / f"{year}_{month:02d}_p{page:02d}.html"
+                    if not page_path.exists():
+                        page_path.write_text(html, encoding="utf-8")
+                        logger.info("list_page_cached", path=str(page_path))
                 overview_urls = [u for u in urls if self._is_title_overview_url(u)]
                 new_urls = [u for u in overview_urls if u not in seen]
                 seen.update(new_urls)
@@ -231,7 +246,7 @@ class VODScraper:
                     browser.close()
 
                 logger.info("scrape_vod_list_success", count=len(title_urls), method="playwright")
-                return title_urls
+                return title_urls, html_content
 
         except Exception as e:
             if browser:
@@ -340,11 +355,11 @@ class VODScraper:
                         title_urls.append(f"https://csfd.cz{href}")
 
             logger.info("scrape_vod_list_success", count=len(title_urls), method="requests")
-            return title_urls
+            return title_urls, response.text
 
         except requests.RequestException as e:
             logger.error("scrape_vod_list_failed", error=str(e), url=vod_page_url, method="requests")
-            return []
+            return [], ""
 
     def scrape_title_details(self, title_url: str) -> Optional[str]:
         """
