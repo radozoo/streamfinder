@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 _TITLE_COLS = [
     "title_id", "url_id", "title", "title_en", "year", "link",
     "rating", "plot", "image_url", "title_type", "parent_url",
-    "vod_date", "distributor", "premiere_detail", "reviews", "scraped_at", "date_added",
+    "vod_date", "distributor", "premiere_detail", "scraped_at", "date_added",
 ]
 
 

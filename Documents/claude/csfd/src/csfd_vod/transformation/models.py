@@ -30,7 +30,7 @@ class VODTitle(BaseModel):
     camera: Optional[str] = Field(None, description="Cinematographers (comma-separated)")
     music: Optional[str] = Field(None, description="Composers (comma-separated)")
     tags: Optional[str] = Field(None, description="User tags (comma-separated)")
-    reviews: Optional[str] = Field(None, description="JSON string [{author, text, stars}]")
+    reviews: Optional[str] = Field(None, description="JSON string [{author, text, stars}] — loaded into dim_reviews, not stored in fact_titles")
     vod_date: Optional[date] = Field(None, description="VOD availability date from list page")
     distributor: Optional[str] = Field(None, description="VOD distributor from list page")
     premiere_detail: Optional[str] = Field(None, description="Raw 'Na VOD od...' text")
