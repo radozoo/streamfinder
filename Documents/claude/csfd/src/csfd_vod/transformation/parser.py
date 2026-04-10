@@ -1,5 +1,6 @@
 """VOD title parser using BeautifulSoup."""
 
+import re
 from typing import Dict, Any, Optional
 from bs4 import BeautifulSoup
 
@@ -52,29 +53,32 @@ class VODTitleParser:
             return None
 
     def _extract_fields(self, soup: BeautifulSoup, url: str) -> Dict[str, Any]:
-        """Extract fields from BeautifulSoup object."""
+        """Extract fields from BeautifulSoup object using CSFD HTML structure."""
         data = {"url_id": url}
 
-        # Title (mandatory)
+        # Title (mandatory) — .film-header h1
         title_selector = self.selectors.get("title_page", {}).get("title_selector")
         if title_selector:
             title_elem = soup.select_one(title_selector)
             if title_elem:
                 data["title"] = title_elem.get_text(strip=True)
 
-        # Year (optional)
-        year_selector = self.selectors.get("title_page", {}).get("year_selector")
-        if year_selector:
-            year_elem = soup.select_one(year_selector)
-            if year_elem:
-                try:
-                    year_text = year_elem.get_text(strip=True)
-                    # Extract number from text like "(2020)"
-                    data["year"] = int("".join(c for c in year_text if c.isdigit()))
-                except (ValueError, AttributeError):
-                    pass
+        # Year + Country (optional) — both from .origin text
+        # Structure: "USA <bullet> (2021–2026) <bullet> 24 h ..."
+        origin = soup.select_one(".origin")
+        if origin:
+            origin_text = origin.get_text()
+            # Year: first 4-digit year found (start year for series)
+            years = re.findall(r"(?:19|20)\d{2}", origin_text)
+            if years:
+                data["year"] = int(years[0])
+            # Country: text before the first "(" (strip bullets/whitespace)
+            country_raw = re.split(r"[\(\d]", origin_text)[0]
+            country = re.sub(r"\s+", " ", country_raw).strip()
+            if country:
+                data["countries"] = country
 
-        # Genres (optional)
+        # Genres (optional) — .genres a
         genre_selector = self.selectors.get("title_page", {}).get("genre_selector")
         if genre_selector:
             genre_elems = soup.select(genre_selector)
@@ -83,41 +87,25 @@ class VODTitleParser:
                 if genres:
                     data["genres"] = genres
 
-        # Directors (optional)
-        director_selector = self.selectors.get("title_page", {}).get("director_selector")
-        if director_selector:
-            director_elems = soup.select(director_selector)
-            if director_elems:
-                directors = ", ".join(e.get_text(strip=True) for e in director_elems)
-                if directors:
-                    data["director"] = directors
+        # Directors (optional) — <h4>Režie:</h4> sibling <a> links
+        h4_rezii = soup.find("h4", string="Režie:")
+        if h4_rezii:
+            directors = [a.get_text(strip=True) for a in h4_rezii.parent.select("a") if a.get_text(strip=True).lower() != "více"]
+            if directors:
+                data["director"] = ", ".join(directors)
 
-        # Actors (optional)
-        actor_selector = self.selectors.get("title_page", {}).get("actors_selector")
-        if actor_selector:
-            actor_elems = soup.select(actor_selector)
-            if actor_elems:
-                actors = ", ".join(e.get_text(strip=True) for e in actor_elems)
-                if actors:
-                    data["actors"] = actors
+        # Actors (optional) — <h4>Hrají:</h4> sibling <a> links
+        h4_hraji = soup.find("h4", string="Hrají:")
+        if h4_hraji:
+            actors = [a.get_text(strip=True) for a in h4_hraji.parent.select("a") if a.get_text(strip=True).lower() != "více"]
+            if actors:
+                data["actors"] = ", ".join(actors)
 
-        # Countries (optional)
-        country_selector = self.selectors.get("title_page", {}).get("country_selector")
-        if country_selector:
-            country_elems = soup.select(country_selector)
-            if country_elems:
-                countries = " / ".join(e.get_text(strip=True) for e in country_elems)
-                if countries:
-                    data["countries"] = countries
-
-        # VOD Platforms (optional)
-        vod_selector = self.selectors.get("title_page", {}).get("vod_selector")
-        if vod_selector:
-            vod_elems = soup.select(vod_selector)
-            if vod_elems:
-                vods = ", ".join(e.get_text(strip=True) for e in vod_elems)
-                if vods:
-                    data["vod_platforms"] = vods
+        # VOD Platforms (optional) — .film-vod-list a (exclude "více" = "more" link)
+        vod_links = soup.select(".film-vod-list a")
+        platforms = [a.get_text(strip=True) for a in vod_links if a.get_text(strip=True).lower() not in ("více", "")]
+        if platforms:
+            data["vod_platforms"] = ", ".join(platforms)
 
         # Link (same as url_id)
         data["link"] = url
