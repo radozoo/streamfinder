@@ -9,8 +9,6 @@ CREATE TABLE IF NOT EXISTS csfd_vod.fact_titles (
     url_id VARCHAR(500) UNIQUE NOT NULL,
     title VARCHAR(500) NOT NULL,
     year INTEGER,
-    director TEXT,
-    actors TEXT,
     link VARCHAR(500) NOT NULL,
     date_added DATE,
     date_scraped TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -33,7 +31,6 @@ ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS parent_url VARCHAR(500
 ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS vod_date DATE;           -- from list page
 ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS distributor VARCHAR(200);-- from list page
 ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS premiere_detail TEXT;    -- raw "Na VOD od..." text
-ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS reviews JSONB;           -- [{author, text, stars}]
 ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS scraped_at TIMESTAMP;
 
 CREATE INDEX IF NOT EXISTS idx_title_type ON csfd_vod.fact_titles(title_type);
@@ -128,6 +125,18 @@ CREATE TABLE IF NOT EXISTS csfd_vod.dim_composers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_composer ON csfd_vod.dim_composers(composer);
+
+-- Dimension table: Reviews (one row per title-author combination)
+CREATE TABLE IF NOT EXISTS csfd_vod.dim_reviews (
+    review_id SERIAL PRIMARY KEY,
+    title_id INTEGER NOT NULL REFERENCES csfd_vod.fact_titles(title_id) ON DELETE CASCADE,
+    author VARCHAR(200),
+    review_text TEXT,
+    stars INTEGER,
+    UNIQUE(title_id, author)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_title_id ON csfd_vod.dim_reviews(title_id);
 
 -- Failed records (dead letter queue)
 CREATE TABLE IF NOT EXISTS csfd_vod.failed_records (

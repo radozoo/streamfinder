@@ -3,6 +3,7 @@
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import uuid
+import json
 
 from sqlalchemy import (
     create_engine,
@@ -145,19 +146,17 @@ class PostgresLoader:
         try:
             insert_sql = text("""
                 INSERT INTO csfd_vod.fact_titles
-                    (url_id, title, year, director, actors, link, date_added, run_id, updated_at,
+                    (url_id, title, year, link, date_added, run_id, updated_at,
                      title_en, plot, rating, image_url, title_type, parent_url,
-                     vod_date, distributor, premiere_detail, reviews, scraped_at)
+                     vod_date, distributor, premiere_detail, scraped_at)
                 VALUES
-                    (:url_id, :title, :year, :director, :actors, :link, :date_added, :run_id, CURRENT_TIMESTAMP,
+                    (:url_id, :title, :year, :link, :date_added, :run_id, CURRENT_TIMESTAMP,
                      :title_en, :plot, :rating, :image_url, :title_type, :parent_url,
-                     :vod_date, :distributor, :premiere_detail, :reviews::jsonb, :scraped_at)
+                     :vod_date, :distributor, :premiere_detail, :scraped_at)
                 ON CONFLICT (url_id)
                 DO UPDATE SET
                     title = EXCLUDED.title,
                     year = EXCLUDED.year,
-                    director = EXCLUDED.director,
-                    actors = EXCLUDED.actors,
                     title_en = EXCLUDED.title_en,
                     plot = EXCLUDED.plot,
                     rating = EXCLUDED.rating,
@@ -167,7 +166,6 @@ class PostgresLoader:
                     vod_date = COALESCE(EXCLUDED.vod_date, csfd_vod.fact_titles.vod_date),
                     distributor = COALESCE(EXCLUDED.distributor, csfd_vod.fact_titles.distributor),
                     premiere_detail = EXCLUDED.premiere_detail,
-                    reviews = EXCLUDED.reviews,
                     scraped_at = EXCLUDED.scraped_at,
                     updated_at = CURRENT_TIMESTAMP,
                     run_id = :run_id
@@ -180,8 +178,6 @@ class PostgresLoader:
                     "url_id": title.url_id,
                     "title": title.title,
                     "year": title.year,
-                    "director": title.director,
-                    "actors": title.actors,
                     "link": title.link,
                     "date_added": title.date_added,
                     "run_id": run_id,
@@ -194,7 +190,6 @@ class PostgresLoader:
                     "vod_date": title.vod_date,
                     "distributor": title.distributor,
                     "premiere_detail": title.premiere_detail,
-                    "reviews": title.reviews,
                     "scraped_at": title.scraped_at,
                 },
             )
@@ -333,6 +328,25 @@ class PostgresLoader:
                                 ON CONFLICT (title_id, composer) DO NOTHING
                             """),
                             {"title_id": title_id, "composer": name},
+                        )
+
+            # Reviews
+            if title.reviews:
+                for rev in json.loads(title.reviews):
+                    author = rev.get("author")
+                    if author:
+                        session.execute(
+                            text("""
+                                INSERT INTO csfd_vod.dim_reviews (title_id, author, review_text, stars)
+                                VALUES (:title_id, :author, :review_text, :stars)
+                                ON CONFLICT (title_id, author) DO NOTHING
+                            """),
+                            {
+                                "title_id": title_id,
+                                "author": author,
+                                "review_text": rev.get("text"),
+                                "stars": rev.get("stars"),
+                            },
                         )
 
         except Exception as e:
