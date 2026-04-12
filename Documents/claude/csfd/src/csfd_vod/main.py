@@ -16,6 +16,8 @@ from csfd_vod.loading.postgres_loader import PostgresLoader
 from csfd_vod.cache import HTMLCache
 from csfd_vod.export.exporter import DataExporter
 from csfd_vod.export.dashboard_generator import DashboardGenerator
+from csfd_vod.export.streamfinder_exporter import StreamfinderExporter
+from csfd_vod.enrichment import TMDBEnricher
 
 
 logger = get_logger(__name__)
@@ -331,6 +333,38 @@ def cmd_dashboard(args) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Command: streamfinder — export JSON files for SvelteKit dashboard
+# ---------------------------------------------------------------------------
+
+def cmd_streamfinder(args) -> dict:
+    """Export Streamfinder JSON data files (titles_index, titles_detail, dimensions)."""
+    config = load_config_from_env()
+    exporter = StreamfinderExporter(config.database.connection_string)
+    logger.info("cmd_streamfinder_start", output_dir=args.output_dir)
+    return exporter.export(args.output_dir)
+
+
+# ---------------------------------------------------------------------------
+# Command: enrich — TMDB enrichment (poster_path, backdrop_path, trailer)
+# ---------------------------------------------------------------------------
+
+def cmd_enrich(args) -> dict:
+    """Enrich titles with TMDB metadata (posters, backdrops, trailers)."""
+    import os
+    api_key = os.environ.get("TMDB_API_KEY")
+    if not api_key:
+        logger.error("cmd_enrich_failed", error="TMDB_API_KEY env var not set")
+        return {"success": False, "error": "TMDB_API_KEY not set"}
+
+    config = load_config_from_env()
+    enricher = TMDBEnricher(api_key=api_key, connection_string=config.database.connection_string)
+
+    logger.info("cmd_enrich_start", limit=args.limit, force=args.force)
+    stats = enricher.enrich(limit=args.limit, force=args.force)
+    return {"success": True, **stats}
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -369,6 +403,15 @@ def main():
         "--output-dir", default="dashboard", help="Output directory (default: dashboard/)"
     )
 
+    # -- streamfinder --
+    p_sf = subparsers.add_parser("streamfinder", help="Export JSON files for Streamfinder SvelteKit app")
+    p_sf.add_argument("--output-dir", default="streamfinder/static/data", help="Output directory for JSON files")
+
+    # -- enrich --
+    p_enrich = subparsers.add_parser("enrich", help="Enrich titles with TMDB metadata (requires TMDB_API_KEY)")
+    p_enrich.add_argument("--limit", type=int, default=None, help="Max titles to process (default: all pending)")
+    p_enrich.add_argument("--force", action="store_true", help="Re-enrich already enriched titles")
+
     args = parser.parse_args()
     setup_logging(args.log_level)
 
@@ -382,6 +425,10 @@ def main():
         result = run_pipeline(vod_page_url=args.url, dry_run=args.dry_run)
     elif args.command == "dashboard":
         result = cmd_dashboard(args)
+    elif args.command == "streamfinder":
+        result = cmd_streamfinder(args)
+    elif args.command == "enrich":
+        result = cmd_enrich(args)
 
     if result.get("success"):
         logger.info("command_success", command=args.command, result=result)
