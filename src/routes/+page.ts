@@ -24,7 +24,7 @@ export const load: PageLoad = async ({ parent }) => {
 					t.vod_date >= cutoff &&
 					t.vod_date <= today.toISOString().slice(0, 10) &&
 					(t.rating ?? 0) >= 75 &&
-					(t.votes_count ?? 0) >= 500 &&
+					(t.votes_count ?? 0) >= 100 &&
 					t.title_type === 'film'
 			)
 			.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))[0] ?? null;
