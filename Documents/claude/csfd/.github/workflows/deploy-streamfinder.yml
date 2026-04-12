@@ -43,6 +43,8 @@ jobs:
           # Set BASE_PATH to the GitHub Pages sub-path, e.g. /csfd
           # Override via repository variable STREAMFINDER_BASE_PATH if needed
           BASE_PATH: ${{ vars.STREAMFINDER_BASE_PATH || '' }}
+          # Full origin for sitemap.xml absolute URLs, e.g. https://radozoo.github.io
+          PUBLIC_SITE_URL: ${{ vars.STREAMFINDER_SITE_URL || 'https://radozoo.github.io' }}
         run: npm run build
 
       - name: Upload Pages artifact
