@@ -1,0 +1,63 @@
+name: Deploy Streamfinder to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'streamfinder/**'
+      - '.github/workflows/deploy-streamfinder.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: streamfinder
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: streamfinder/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        env:
+          # Set BASE_PATH to the GitHub Pages sub-path, e.g. /csfd
+          # Override via repository variable STREAMFINDER_BASE_PATH if needed
+          BASE_PATH: ${{ vars.STREAMFINDER_BASE_PATH || '' }}
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: streamfinder/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
