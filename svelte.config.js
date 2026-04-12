@@ -14,8 +14,10 @@ const config = {
 			base: process.env.BASE_PATH ?? ''
 		},
 		prerender: {
+			// Only crawl these top-level routes; title detail pages use SPA fallback
+			crawl: true,
+			entries: ['/', '/katalog', '/kalendar', '/insights'],
 			handleHttpError: ({ path, referrer, message }) => {
-				// Ignore 404s for individual title pages (prerendered from detail map)
 				if (path.startsWith('/titul/') || (referrer && referrer.includes('/titul/'))) return;
 				console.warn(`Prerender warning: ${message}`);
 			}
