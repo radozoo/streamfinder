@@ -14,9 +14,11 @@ const config = {
 			base: process.env.BASE_PATH ?? ''
 		},
 		prerender: {
+			// Production origin for sitemap.xml absolute URLs
+			origin: process.env.PUBLIC_SITE_URL ?? 'https://radozoo.github.io',
 			// Only crawl these top-level routes; title detail pages use SPA fallback
 			crawl: true,
-			entries: ['/', '/katalog', '/kalendar', '/insights'],
+			entries: ['/', '/katalog', '/kalendar', '/insights', '/sitemap.xml'],
 			handleHttpError: ({ path, referrer, message }) => {
 				if (path.startsWith('/titul/') || (referrer && referrer.includes('/titul/'))) return;
 				console.warn(`Prerender warning: ${message}`);

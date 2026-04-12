@@ -191,7 +191,7 @@
 	}
 
 	.hero-title {
-		font-family: 'Georgia', serif;
+		font-family: 'Playfair Display', Georgia, serif;
 		font-size: 2.2rem;
 		font-weight: 700;
 		line-height: 1.2;
@@ -359,7 +359,7 @@
 	}
 
 	.stat-num {
-		font-family: 'Georgia', serif;
+		font-family: 'Playfair Display', Georgia, serif;
 		font-size: 2rem;
 		font-weight: 700;
 		color: var(--amber);

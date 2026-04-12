@@ -11,5 +11,12 @@ export const load: LayoutLoad = async ({ fetch }) => {
 	]);
 	const titles: TitleIndex[] = await indexRes.json();
 	const dimensions: Dimensions = await dimsRes.json();
-	return { titles, dimensions };
+
+	// Find latest vod_date for footer "last updated"
+	const lastUpdate = titles.reduce((latest, t) => {
+		if (t.vod_date && t.vod_date > latest) return t.vod_date;
+		return latest;
+	}, '');
+
+	return { titles, dimensions, lastUpdate };
 };

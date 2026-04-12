@@ -33,6 +33,7 @@ jobs:
       - name: Build
         env:
           BASE_PATH: ${{ vars.STREAMFINDER_BASE_PATH || '' }}
+          PUBLIC_SITE_URL: ${{ vars.STREAMFINDER_SITE_URL || 'https://radozoo.github.io' }}
         run: npm run build
 
       - name: Upload Pages artifact

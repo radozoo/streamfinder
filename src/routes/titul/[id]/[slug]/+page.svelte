@@ -30,6 +30,12 @@
 	<title>{t.title} ({t.year ?? '?'}) — Streamfinder</title>
 	{#if t.plot}
 		<meta name="description" content={t.plot.slice(0, 160)} />
+		<meta property="og:description" content={t.plot.slice(0, 160)} />
+	{/if}
+	<meta property="og:title" content="{t.title} ({t.year ?? '?'})" />
+	<meta property="og:type" content="video.movie" />
+	{#if t.poster}
+		<meta property="og:image" content={t.poster} />
 	{/if}
 </svelte:head>
 

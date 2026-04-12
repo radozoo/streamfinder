@@ -2,34 +2,60 @@
 	import type { PageData } from './$types';
 	import type { TitleIndex, TitleDetail } from '$lib/types';
 	import PosterCard from '$lib/components/PosterCard.svelte';
+	import TitleModal from '$lib/components/TitleModal.svelte';
 	import { base } from '$app/paths';
+	import { untrack } from 'svelte';
 
 	let { data }: { data: PageData } = $props();
 
+	const PAGE_SIZE = 48;
+
+	// snapshot of initial URL filter state — untrack so $state initialization
+	// doesn't accidentally subscribe to the reactive `data` prop
+	const snap = untrack(() => data);
+
 	// ── Filter state ──────────────────────────────────────────────────────────
-	let searchQuery = $state('');
-	let selectedGenres = $state<string[]>([]);
-	let selectedPlatforms = $state<string[]>([]);
-	let selectedCountries = $state<string[]>([]);
-	let selectedType = $state<string>('');
-	let yearFrom = $state<number | ''>('');
-	let yearTo = $state<number | ''>('');
-	let ratingMin = $state<number | ''>('');
-	let sortBy = $state<'rating' | 'year' | 'vod_date' | 'votes'>('vod_date');
+	let searchQuery = $state(snap.initialQuery ?? '');
+	let selectedGenres = $state<string[]>(snap.initialGenres ?? []);
+	let selectedPlatforms = $state<string[]>(snap.initialPlatforms ?? []);
+	let selectedCountries = $state<string[]>(snap.initialCountries ?? []);
+	let selectedTags = $state<string[]>(snap.initialTags ?? []);
+	let selectedType = $state<string>(snap.initialType ?? '');
+	let yearFrom = $state<number | ''>(snap.initialYearFrom ?? '');
+	let yearTo = $state<number | ''>(snap.initialYearTo ?? '');
+	let ratingMin = $state<number | ''>(snap.initialRatingMin ?? '');
+	let sortBy = $state<'rating' | 'year' | 'vod_date' | 'votes'>(snap.initialSort ?? 'vod_date');
+
+	// ── Pagination ───────────────────────────────────────────────────────────
+	let page = $state(1);
+
+	// ── Mobile filter sheet ──────────────────────────────────────────────────
+	let filterPanelOpen = $state(false);
 
 	// ── Modal state ───────────────────────────────────────────────────────────
 	let modalTitle = $state<TitleDetail | null>(null);
 	let modalLoading = $state(false);
+	let detailCache: Record<string, TitleDetail> | null = null;
 
 	// ── Filtered + sorted titles ──────────────────────────────────────────────
 	let filtered = $derived.by(() => {
 		const q = searchQuery.trim().toLowerCase();
 		return data.titles
 			.filter((t) => {
-				if (q && !t.title.toLowerCase().includes(q) && !(t.title_en ?? '').toLowerCase().includes(q)) return false;
-				if (selectedGenres.length && !selectedGenres.some((g) => t.genres.includes(g))) return false;
-				if (selectedPlatforms.length && !selectedPlatforms.some((p) => t.platforms.includes(p))) return false;
-				if (selectedCountries.length && !selectedCountries.some((c) => t.countries.includes(c))) return false;
+				if (
+					q &&
+					!t.title.toLowerCase().includes(q) &&
+					!(t.title_en ?? '').toLowerCase().includes(q)
+				)
+					return false;
+				if (selectedGenres.length && !selectedGenres.some((g) => t.genres.includes(g)))
+					return false;
+				if (selectedPlatforms.length && !selectedPlatforms.some((p) => t.platforms.includes(p)))
+					return false;
+				if (selectedCountries.length && !selectedCountries.some((c) => t.countries.includes(c)))
+					return false;
+				if (selectedTags.length && !selectedTags.some((tag) => t.tags.includes(tag)))
+					return false;
 				if (selectedType && t.title_type !== selectedType) return false;
 				if (yearFrom !== '' && (t.year ?? 0) < yearFrom) return false;
 				if (yearTo !== '' && (t.year ?? 9999) > yearTo) return false;
@@ -40,9 +66,34 @@
 				if (sortBy === 'rating') return (b.rating ?? 0) - (a.rating ?? 0);
 				if (sortBy === 'year') return (b.year ?? 0) - (a.year ?? 0);
 				if (sortBy === 'votes') return (b.votes_count ?? 0) - (a.votes_count ?? 0);
-				// vod_date desc
 				return (b.vod_date ?? '').localeCompare(a.vod_date ?? '');
 			});
+	});
+
+	// Reset page when filters change
+	$effect(() => {
+		filtered;
+		page = 1;
+	});
+
+	let displayedTitles = $derived(filtered.slice(0, page * PAGE_SIZE));
+	let hasMore = $derived(filtered.length > page * PAGE_SIZE);
+
+	// ── URL sync ──────────────────────────────────────────────────────────────
+	$effect(() => {
+		const params = new URLSearchParams();
+		if (searchQuery.trim()) params.set('q', searchQuery.trim());
+		if (selectedGenres.length) params.set('genre', selectedGenres.join(','));
+		if (selectedPlatforms.length) params.set('platform', selectedPlatforms.join(','));
+		if (selectedCountries.length) params.set('country', selectedCountries.join(','));
+		if (selectedTags.length) params.set('tag', selectedTags.join(','));
+		if (selectedType) params.set('type', selectedType);
+		if (yearFrom !== '') params.set('yearFrom', String(yearFrom));
+		if (yearTo !== '') params.set('yearTo', String(yearTo));
+		if (ratingMin !== '') params.set('ratingMin', String(ratingMin));
+		if (sortBy !== 'vod_date') params.set('sort', sortBy);
+		const str = params.toString();
+		history.replaceState(null, '', str ? '?' + str : location.pathname);
 	});
 
 	// ── Dimension pills available counts ─────────────────────────────────────
@@ -58,11 +109,23 @@
 			hit: filtered.some((t) => t.platforms.includes(p.name))
 		}))
 	);
+	let availableCountries = $derived(
+		data.dimensions.countries.slice(0, 12).map((c) => ({
+			...c,
+			hit: filtered.some((t) => t.countries.includes(c.name))
+		}))
+	);
+	let availableTags = $derived(
+		data.dimensions.tags.slice(0, 20).map((tag) => ({
+			...tag,
+			hit: filtered.some((t) => t.tags.includes(tag.name))
+		}))
+	);
 
-	// ── Types from data ───────────────────────────────────────────────────────
 	let typeOptions = $derived(
-		['film', 'seriál', 'tv film', 'pořad', 'krátký film']
-			.filter((type) => data.titles.some((t) => t.title_type === type))
+		['film', 'seriál', 'tv film', 'pořad', 'krátký film'].filter((type) =>
+			data.titles.some((t) => t.title_type === type)
+		)
 	);
 
 	// ── Helpers ───────────────────────────────────────────────────────────────
@@ -71,11 +134,20 @@
 			? selectedGenres.filter((g) => g !== name)
 			: [...selectedGenres, name];
 	}
-
 	function togglePlatform(name: string) {
 		selectedPlatforms = selectedPlatforms.includes(name)
 			? selectedPlatforms.filter((p) => p !== name)
 			: [...selectedPlatforms, name];
+	}
+	function toggleCountry(name: string) {
+		selectedCountries = selectedCountries.includes(name)
+			? selectedCountries.filter((c) => c !== name)
+			: [...selectedCountries, name];
+	}
+	function toggleTag(name: string) {
+		selectedTags = selectedTags.includes(name)
+			? selectedTags.filter((t) => t !== name)
+			: [...selectedTags, name];
 	}
 
 	function clearAll() {
@@ -83,10 +155,12 @@
 		selectedGenres = [];
 		selectedPlatforms = [];
 		selectedCountries = [];
+		selectedTags = [];
 		selectedType = '';
 		yearFrom = '';
 		yearTo = '';
 		ratingMin = '';
+		filterPanelOpen = false;
 	}
 
 	let hasFilters = $derived(
@@ -94,10 +168,23 @@
 			selectedGenres.length > 0 ||
 			selectedPlatforms.length > 0 ||
 			selectedCountries.length > 0 ||
+			selectedTags.length > 0 ||
 			selectedType !== '' ||
 			yearFrom !== '' ||
 			yearTo !== '' ||
 			ratingMin !== ''
+	);
+
+	let activeFilterCount = $derived(
+		(searchQuery.trim() ? 1 : 0) +
+			selectedGenres.length +
+			selectedPlatforms.length +
+			selectedCountries.length +
+			selectedTags.length +
+			(selectedType ? 1 : 0) +
+			(yearFrom !== '' ? 1 : 0) +
+			(yearTo !== '' ? 1 : 0) +
+			(ratingMin !== '' ? 1 : 0)
 	);
 
 	// ── Modal ─────────────────────────────────────────────────────────────────
@@ -105,12 +192,40 @@
 		modalLoading = true;
 		modalTitle = null;
 		try {
-			const res = await fetch(`${base}/data/titles_detail.json`);
-			const detail: Record<string, TitleDetail> = await res.json();
+			if (!detailCache) {
+				const res = await fetch(`${base}/data/titles_detail.json`);
+				detailCache = await res.json();
+			}
 			const key = `${t.id}-${t.slug}`;
-			modalTitle = detail[key] ?? { ...t, plot: null, backdrop: null, trailer_youtube_id: null, age_rating: null, directors: [], actors: [], screenwriters: [], cinematographers: [], composers: [], reviews: [], vods: [] };
+			modalTitle = detailCache![key] ?? {
+				...t,
+				plot: null,
+				backdrop: null,
+				trailer_youtube_id: null,
+				age_rating: null,
+				directors: [],
+				actors: [],
+				screenwriters: [],
+				cinematographers: [],
+				composers: [],
+				reviews: [],
+				vods: []
+			};
 		} catch {
-			modalTitle = { ...t, plot: null, backdrop: null, trailer_youtube_id: null, age_rating: null, directors: [], actors: [], screenwriters: [], cinematographers: [], composers: [], reviews: [], vods: [] };
+			modalTitle = {
+				...t,
+				plot: null,
+				backdrop: null,
+				trailer_youtube_id: null,
+				age_rating: null,
+				directors: [],
+				actors: [],
+				screenwriters: [],
+				cinematographers: [],
+				composers: [],
+				reviews: [],
+				vods: []
+			};
 		} finally {
 			modalLoading = false;
 		}
@@ -122,22 +237,8 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') closeModal();
+		if (e.key === 'Escape') filterPanelOpen = false;
 	}
-
-	function ratingColor(r: number | null) {
-		if (!r) return 'var(--text-muted)';
-		if (r >= 70) return '#4caf50';
-		if (r >= 50) return 'var(--amber)';
-		return '#e57373';
-	}
-
-	// initial genre from URL (passed by +page.ts)
-	$effect(() => {
-		if (data.initialGenre && !selectedGenres.includes(data.initialGenre)) {
-			selectedGenres = [data.initialGenre];
-		}
-	});
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -147,7 +248,8 @@
 	<div class="katalog-header">
 		<h1 class="section-title">Katalog</h1>
 		<div class="result-count">
-			{filtered.length} {filtered.length === 1 ? 'titul' : filtered.length < 5 ? 'tituly' : 'titulů'}
+			{filtered.length.toLocaleString('cs-CZ')}
+			{filtered.length === 1 ? 'titul' : filtered.length < 5 ? 'tituly' : 'titulů'}
 		</div>
 	</div>
 
@@ -168,7 +270,7 @@
 	</div>
 
 	<div class="katalog-body">
-		<!-- Sidebar filters -->
+		<!-- Sidebar filters (desktop) -->
 		<aside class="sidebar">
 			{#if hasFilters}
 				<button class="clear-btn" onclick={clearAll}>✕ Zrušit filtry</button>
@@ -224,6 +326,44 @@
 				</div>
 			</div>
 
+			<!-- Countries -->
+			{#if data.dimensions.countries.length > 0}
+				<div class="filter-group">
+					<h3 class="filter-label">Země</h3>
+					<div class="pill-group">
+						{#each availableCountries as c}
+							<button
+								class="pill"
+								class:active={selectedCountries.includes(c.name)}
+								class:disabled={!c.hit && !selectedCountries.includes(c.name)}
+								onclick={() => toggleCountry(c.name)}
+							>
+								{c.name}
+							</button>
+						{/each}
+					</div>
+				</div>
+			{/if}
+
+			<!-- Tags -->
+			{#if data.dimensions.tags.length > 0}
+				<div class="filter-group">
+					<h3 class="filter-label">Tagy</h3>
+					<div class="pill-group">
+						{#each availableTags as tag}
+							<button
+								class="pill"
+								class:active={selectedTags.includes(tag.name)}
+								class:disabled={!tag.hit && !selectedTags.includes(tag.name)}
+								onclick={() => toggleTag(tag.name)}
+							>
+								{tag.name}
+							</button>
+						{/each}
+					</div>
+				</div>
+			{/if}
+
 			<!-- Year range -->
 			<div class="filter-group">
 				<h3 class="filter-label">Rok výroby</h3>
@@ -274,140 +414,153 @@
 				</div>
 			{:else}
 				<div class="poster-grid">
-					{#each filtered as title (title.id)}
+					{#each displayedTitles as title (title.id)}
 						<PosterCard {title} onclick={openModal} />
 					{/each}
 				</div>
+
+				{#if hasMore}
+					<div class="load-more-row">
+						<button class="load-more-btn" onclick={() => page++}>
+							Načíst další
+							<span class="load-more-count">({filtered.length - displayedTitles.length} zbývá)</span>
+						</button>
+					</div>
+				{/if}
 			{/if}
 		</section>
 	</div>
 </div>
 
-<!-- Modal overlay -->
-{#if modalLoading || modalTitle}
-	<div class="modal-overlay" onclick={closeModal} role="dialog" aria-modal="true">
-		<div class="modal" onclick={(e) => e.stopPropagation()}>
-			<button class="modal-close" onclick={closeModal} aria-label="Zavřít">✕</button>
+<!-- Mobile FAB -->
+<button
+	class="filter-fab"
+	onclick={() => (filterPanelOpen = true)}
+	aria-label="Otevřít filtry"
+>
+	<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+		<line x1="4" y1="6" x2="20" y2="6" />
+		<line x1="8" y1="12" x2="20" y2="12" />
+		<line x1="12" y1="18" x2="20" y2="18" />
+	</svg>
+	Filtrovat
+	{#if activeFilterCount > 0}
+		<span class="fab-badge">{activeFilterCount}</span>
+	{/if}
+</button>
 
-			{#if modalLoading}
-				<div class="modal-loading">Načítám…</div>
-			{:else if modalTitle}
-				{#if modalTitle.backdrop}
-					<div class="modal-backdrop">
-						<img src={modalTitle.backdrop} alt="" />
-						<div class="backdrop-fade"></div>
+<!-- Mobile filter sheet -->
+{#if filterPanelOpen}
+	<div class="sheet-backdrop" onclick={() => (filterPanelOpen = false)} onkeydown={(e) => e.key === 'Escape' && (filterPanelOpen = false)} role="presentation" tabindex="-1">
+		<div class="filter-sheet" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Filtry" tabindex="-1">
+			<div class="sheet-header">
+				<h2 class="sheet-title">Filtry</h2>
+				{#if hasFilters}
+					<button class="clear-btn" onclick={clearAll}>Zrušit filtry</button>
+				{/if}
+				<button class="sheet-close" onclick={() => (filterPanelOpen = false)} aria-label="Zavřít">✕</button>
+			</div>
+
+			<div class="sheet-body">
+				<!-- Type -->
+				<div class="filter-group">
+					<h3 class="filter-label">Typ</h3>
+					<div class="pill-group">
+						{#each typeOptions as type}
+							<button
+								class="pill"
+								class:active={selectedType === type}
+								onclick={() => (selectedType = selectedType === type ? '' : type)}
+							>
+								{type}
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<!-- Platforms -->
+				<div class="filter-group">
+					<h3 class="filter-label">Platforma</h3>
+					<div class="pill-group">
+						{#each availablePlatforms.slice(0, 12) as p}
+							<button
+								class="pill"
+								class:active={selectedPlatforms.includes(p.name)}
+								class:disabled={!p.hit && !selectedPlatforms.includes(p.name)}
+								onclick={() => togglePlatform(p.name)}
+							>
+								{p.name}
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<!-- Genres -->
+				<div class="filter-group">
+					<h3 class="filter-label">Žánr</h3>
+					<div class="pill-group">
+						{#each availableGenres.slice(0, 20) as g}
+							<button
+								class="pill"
+								class:active={selectedGenres.includes(g.name)}
+								class:disabled={!g.hit && !selectedGenres.includes(g.name)}
+								onclick={() => toggleGenre(g.name)}
+							>
+								{g.name}
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<!-- Countries -->
+				{#if data.dimensions.countries.length > 0}
+					<div class="filter-group">
+						<h3 class="filter-label">Země</h3>
+						<div class="pill-group">
+							{#each availableCountries as c}
+								<button
+									class="pill"
+									class:active={selectedCountries.includes(c.name)}
+									class:disabled={!c.hit && !selectedCountries.includes(c.name)}
+									onclick={() => toggleCountry(c.name)}
+								>
+									{c.name}
+								</button>
+							{/each}
+						</div>
 					</div>
 				{/if}
 
-				<div class="modal-content">
-					<div class="modal-top">
-						{#if modalTitle.poster}
-							<img class="modal-poster" src={modalTitle.poster} alt={modalTitle.title} />
-						{/if}
-
-						<div class="modal-info">
-							<h2 class="modal-title">{modalTitle.title}</h2>
-							{#if modalTitle.title_en && modalTitle.title_en !== modalTitle.title}
-								<p class="modal-title-en">{modalTitle.title_en}</p>
-							{/if}
-
-							<div class="modal-meta-row">
-								{#if modalTitle.rating !== null}
-									<span class="modal-rating" style="color: {ratingColor(modalTitle.rating)}">
-										{modalTitle.rating} %
-									</span>
-								{/if}
-								{#if modalTitle.year}
-									<span class="meta-sep">{modalTitle.year}</span>
-								{/if}
-								{#if modalTitle.runtime_min}
-									<span class="meta-sep">{Math.floor(modalTitle.runtime_min / 60)}h {modalTitle.runtime_min % 60}min</span>
-								{/if}
-								{#if modalTitle.title_type}
-									<span class="meta-sep type-badge">{modalTitle.title_type}</span>
-								{/if}
-								{#if modalTitle.age_rating}
-									<span class="meta-sep age-badge">{modalTitle.age_rating}</span>
-								{/if}
-							</div>
-
-							{#if modalTitle.genres.length}
-								<div class="modal-genres">
-									{#each modalTitle.genres as g}
-										<span class="pill">{g}</span>
-									{/each}
-								</div>
-							{/if}
-
-							{#if modalTitle.plot}
-								<p class="modal-plot">{modalTitle.plot}</p>
-							{/if}
-
-							{#if modalTitle.directors.length}
-								<p class="modal-crew"><strong>Režie:</strong> {modalTitle.directors.join(', ')}</p>
-							{/if}
-							{#if modalTitle.actors.length}
-								<p class="modal-crew"><strong>Hrají:</strong> {modalTitle.actors.slice(0, 6).join(', ')}</p>
-							{/if}
-
-							<!-- VOD links -->
-							{#if modalTitle.vods.length}
-								<div class="modal-vods">
-									{#each modalTitle.vods as vod}
-										{#if vod.url}
-											<a class="vod-btn" href={vod.url} target="_blank" rel="noopener noreferrer">
-												▶ {vod.platform}
-											</a>
-										{:else}
-											<span class="vod-badge">{vod.platform}</span>
-										{/if}
-									{/each}
-								</div>
-							{/if}
-
-							<a class="detail-link" href="{base}/titul/{modalTitle.id}/{modalTitle.slug}">
-								Zobrazit detail →
-							</a>
-						</div>
+				<!-- Year range -->
+				<div class="filter-group">
+					<h3 class="filter-label">Rok výroby</h3>
+					<div class="year-range">
+						<input class="num-input" type="number" placeholder="Od" min="1900" max="2030" bind:value={yearFrom} />
+						<span>–</span>
+						<input class="num-input" type="number" placeholder="Do" min="1900" max="2030" bind:value={yearTo} />
 					</div>
-
-					<!-- Trailer -->
-					{#if modalTitle.trailer_youtube_id}
-						<div class="modal-trailer">
-							<iframe
-								src="https://www.youtube.com/embed/{modalTitle.trailer_youtube_id}"
-								title="Trailer"
-								frameborder="0"
-								allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-								allowfullscreen
-							></iframe>
-						</div>
-					{/if}
-
-					<!-- Reviews -->
-					{#if modalTitle.reviews.length}
-						<div class="modal-reviews">
-							<h3 class="filter-label">Recenze</h3>
-							{#each modalTitle.reviews.slice(0, 2) as review}
-								<div class="review-item">
-									{#if review.stars !== null}
-										<div class="stars">{'★'.repeat(review.stars)}{'☆'.repeat(5 - review.stars)}</div>
-									{/if}
-									{#if review.author}
-										<span class="review-author">{review.author}</span>
-									{/if}
-									{#if review.text}
-										<p class="review-text">{review.text.slice(0, 280)}{review.text.length > 280 ? '…' : ''}</p>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					{/if}
 				</div>
-			{/if}
+
+				<!-- Min rating -->
+				<div class="filter-group">
+					<h3 class="filter-label">Min. hodnocení</h3>
+					<div class="year-range">
+						<input class="num-input" type="number" placeholder="0" min="0" max="100" bind:value={ratingMin} />
+						<span>%</span>
+					</div>
+				</div>
+			</div>
+
+			<div class="sheet-footer">
+				<button class="apply-btn" onclick={() => (filterPanelOpen = false)}>
+					Zobrazit {filtered.length.toLocaleString('cs-CZ')} titulů
+				</button>
+			</div>
 		</div>
 	</div>
 {/if}
+
+<TitleModal title={modalTitle} loading={modalLoading} onclose={closeModal} />
 
 <style>
 	.katalog-header {
@@ -459,17 +612,6 @@
 		grid-template-columns: 220px 1fr;
 		gap: 2rem;
 		align-items: start;
-	}
-
-	@media (max-width: 900px) {
-		.katalog-body {
-			grid-template-columns: 1fr;
-		}
-		.sidebar {
-			display: grid;
-			grid-template-columns: repeat(2, 1fr);
-			gap: 1rem;
-		}
 	}
 
 	/* Sidebar */
@@ -536,19 +678,10 @@
 		border-color: var(--text-muted);
 	}
 
-	/* Grid */
-	.grid-area {}
-
 	.poster-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 		gap: 1rem;
-	}
-
-	@media (max-width: 640px) {
-		.poster-grid {
-			grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-		}
 	}
 
 	.empty-state {
@@ -560,242 +693,164 @@
 		color: var(--text-muted);
 	}
 
-	/* Modal */
-	.modal-overlay {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.75);
-		z-index: 200;
+	/* Load more */
+	.load-more-row {
 		display: flex;
-		align-items: center;
 		justify-content: center;
-		padding: 1rem;
-		backdrop-filter: blur(4px);
+		margin-top: 2rem;
 	}
 
-	.modal {
-		background: var(--navy-800);
-		border-radius: var(--radius);
+	.load-more-btn {
+		background: var(--navy-700);
 		border: 1px solid var(--border);
-		width: 100%;
-		max-width: 820px;
-		max-height: 90vh;
-		overflow-y: auto;
-		position: relative;
-		scrollbar-width: thin;
-		scrollbar-color: var(--navy-500) transparent;
-	}
-
-	.modal-close {
-		position: sticky;
-		top: 0.75rem;
-		float: right;
-		margin: 0.75rem 0.75rem 0 0;
-		background: rgba(0,0,0,0.5);
-		border: none;
-		border-radius: 50%;
-		width: 32px;
-		height: 32px;
-		color: var(--text-primary);
+		border-radius: var(--radius);
+		padding: 0.7rem 2rem;
+		color: var(--text-secondary);
 		font-size: 0.9rem;
 		cursor: pointer;
-		z-index: 10;
+		transition: border-color 0.15s, color 0.15s;
+	}
+
+	.load-more-btn:hover {
+		border-color: var(--amber);
+		color: var(--text-primary);
+	}
+
+	.load-more-count {
+		color: var(--text-muted);
+		font-size: 0.8rem;
+		margin-left: 0.4rem;
+	}
+
+	/* Mobile FAB */
+	.filter-fab {
+		display: none;
+		position: fixed;
+		bottom: 1.5rem;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 50;
+		background: var(--amber);
+		color: var(--navy-900);
+		border: none;
+		border-radius: 999px;
+		padding: 0.65rem 1.5rem;
+		font-size: 0.9rem;
+		font-weight: 700;
+		cursor: pointer;
+		gap: 0.4rem;
+		align-items: center;
+		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+	}
+
+	.fab-badge {
+		background: var(--navy-900);
+		color: var(--amber);
+		border-radius: 999px;
+		width: 20px;
+		height: 20px;
+		font-size: 0.7rem;
+		font-weight: 800;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 	}
 
-	.modal-loading {
-		padding: 4rem;
-		text-align: center;
-		color: var(--text-muted);
-	}
-
-	.modal-backdrop {
-		position: relative;
-		height: 200px;
-		overflow: hidden;
-		border-radius: var(--radius) var(--radius) 0 0;
-	}
-
-	.modal-backdrop img {
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-		object-position: center 30%;
-	}
-
-	.backdrop-fade {
-		position: absolute;
+	/* Mobile bottom sheet */
+	.sheet-backdrop {
+		position: fixed;
 		inset: 0;
-		background: linear-gradient(to bottom, transparent 30%, var(--navy-800));
-	}
-
-	.modal-content {
-		padding: 1.5rem;
-	}
-
-	.modal-top {
+		background: rgba(0, 0, 0, 0.6);
+		z-index: 150;
 		display: flex;
-		gap: 1.5rem;
-		margin-bottom: 1.25rem;
+		align-items: flex-end;
 	}
 
-	.modal-poster {
-		width: 110px;
-		min-width: 110px;
-		border-radius: var(--radius-sm);
-		object-fit: cover;
-		margin-top: -60px;
-		position: relative;
-		z-index: 1;
-		box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+	.filter-sheet {
+		width: 100%;
+		background: var(--navy-800);
+		border-radius: var(--radius) var(--radius) 0 0;
+		border-top: 1px solid var(--border);
+		max-height: 85vh;
+		display: flex;
+		flex-direction: column;
 	}
 
-	.modal-title {
-		font-family: 'Georgia', serif;
-		font-size: 1.4rem;
-		line-height: 1.2;
-		margin-bottom: 0.25rem;
-	}
-
-	.modal-title-en {
-		color: var(--text-muted);
-		font-size: 0.85rem;
-		margin-bottom: 0.5rem;
-	}
-
-	.modal-meta-row {
+	.sheet-header {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-		margin-bottom: 0.75rem;
-		font-size: 0.85rem;
+		gap: 0.75rem;
+		padding: 1rem 1.25rem;
+		border-bottom: 1px solid var(--border);
+		flex-shrink: 0;
 	}
 
-	.modal-rating {
+	.sheet-title {
+		font-family: 'Playfair Display', Georgia, serif;
+		font-size: 1.1rem;
 		font-weight: 700;
+		flex: 1;
+	}
+
+	.sheet-close {
+		background: none;
+		border: none;
+		color: var(--text-muted);
 		font-size: 1rem;
+		cursor: pointer;
+		padding: 0.25rem;
 	}
 
-	.meta-sep {
-		color: var(--text-muted);
-	}
-
-	.type-badge {
-		background: var(--navy-600);
-		padding: 2px 8px;
-		border-radius: 999px;
-		font-size: 0.75rem;
-		color: var(--text-secondary);
-	}
-
-	.age-badge {
-		background: var(--navy-600);
-		padding: 2px 8px;
-		border-radius: 999px;
-		font-size: 0.75rem;
-		color: #e57373;
-	}
-
-	.modal-genres {
+	.sheet-body {
+		overflow-y: auto;
+		padding: 1.25rem;
 		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem;
-		margin-bottom: 0.75rem;
+		flex-direction: column;
+		gap: 1.25rem;
+		flex: 1;
 	}
 
-	.modal-plot {
-		color: var(--text-secondary);
-		font-size: 0.9rem;
-		line-height: 1.6;
-		margin-bottom: 0.75rem;
+	.sheet-footer {
+		padding: 1rem 1.25rem;
+		border-top: 1px solid var(--border);
+		flex-shrink: 0;
 	}
 
-	.modal-crew {
-		font-size: 0.85rem;
-		color: var(--text-muted);
-		margin-bottom: 0.35rem;
-	}
-
-	.modal-crew strong {
-		color: var(--text-secondary);
-	}
-
-	.modal-vods {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-top: 1rem;
-	}
-
-	.vod-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		padding: 0.45rem 1rem;
+	.apply-btn {
+		width: 100%;
 		background: var(--amber);
 		color: var(--navy-900);
+		border: none;
+		border-radius: var(--radius);
+		padding: 0.75rem;
+		font-size: 0.95rem;
 		font-weight: 700;
-		font-size: 0.85rem;
-		border-radius: var(--radius-sm);
-		text-decoration: none;
+		cursor: pointer;
 		transition: opacity 0.15s;
 	}
 
-	.vod-btn:hover {
-		opacity: 0.85;
+	.apply-btn:hover {
+		opacity: 0.9;
 	}
 
-	.detail-link {
-		display: inline-block;
-		margin-top: 1rem;
-		color: var(--amber);
-		font-size: 0.85rem;
-		text-decoration: none;
+	/* Responsive */
+	@media (max-width: 900px) {
+		.katalog-body {
+			grid-template-columns: 1fr;
+		}
+
+		.sidebar {
+			display: none;
+		}
+
+		.filter-fab {
+			display: flex;
+		}
 	}
 
-	.detail-link:hover {
-		text-decoration: underline;
-	}
-
-	.modal-trailer {
-		margin-top: 1rem;
-		border-radius: var(--radius-sm);
-		overflow: hidden;
-	}
-
-	.modal-trailer iframe {
-		width: 100%;
-		aspect-ratio: 16/9;
-		display: block;
-	}
-
-	.modal-reviews {
-		margin-top: 1.5rem;
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
-	.review-item {
-		background: var(--navy-700);
-		border-radius: var(--radius-sm);
-		padding: 0.75rem 1rem;
-	}
-
-	.review-author {
-		font-size: 0.8rem;
-		font-weight: 600;
-		color: var(--text-secondary);
-		margin-left: 0.5rem;
-	}
-
-	.review-text {
-		font-size: 0.85rem;
-		color: var(--text-muted);
-		margin-top: 0.4rem;
-		line-height: 1.55;
+	@media (max-width: 640px) {
+		.poster-grid {
+			grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+		}
 	}
 </style>
