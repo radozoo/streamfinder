@@ -52,6 +52,18 @@ class HTMLCache:
         """Return all URLs that have cached HTML."""
         return list(self._load_index().keys())
 
+    def delete(self, url: str) -> bool:
+        """Remove cached HTML for url. Returns True if entry existed."""
+        path = self._html_path(url)
+        existed = path.exists()
+        if existed:
+            path.unlink()
+        index = self._load_index()
+        if url in index:
+            del index[url]
+            self.index_path.write_text(json.dumps(index, indent=2, ensure_ascii=False), encoding="utf-8")
+        return existed
+
     def count(self) -> int:
         """Return number of cached pages."""
         return len(self.all_urls())

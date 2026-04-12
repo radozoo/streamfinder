@@ -36,6 +36,13 @@ class VODTitle(BaseModel):
     premiere_detail: Optional[str] = Field(None, description="Raw 'Na VOD od...' text")
     scraped_at: Optional[datetime] = Field(None, description="When HTML was downloaded")
 
+    # New fields for Streamfinder dashboard (2026-04-12)
+    runtime_min: Optional[int] = Field(None, description="Film duration in minutes")
+    votes_count: Optional[int] = Field(None, description="Number of CSFD ratings")
+    trailer_url: Optional[str] = Field(None, description="YouTube trailer URL")
+    age_rating: Optional[str] = Field(None, description="Age restriction (e.g., 'od 15 let')")
+    vod_urls: Optional[str] = Field(None, description="JSON string {platform: url} — VOD platform direct URLs")
+
     @field_validator("year")
     @classmethod
     def validate_year(cls, v: Optional[int]) -> Optional[int]:

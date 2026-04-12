@@ -10,6 +10,9 @@ requires-python = ">=3.9"
 authors = [{name = "radozoo"}]
 license = {text = "MIT"}
 
+[project.scripts]
+csfd = "csfd_vod.main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",

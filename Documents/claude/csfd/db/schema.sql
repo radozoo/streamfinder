@@ -33,6 +33,12 @@ ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS distributor VARCHAR(20
 ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS premiere_detail TEXT;    -- raw "Na VOD od..." text
 ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS scraped_at TIMESTAMP;
 
+-- New columns added for Streamfinder dashboard (2026-04-12)
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS runtime_min INTEGER;
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS votes_count INTEGER;
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS trailer_url VARCHAR(500);
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS age_rating VARCHAR(20);
+
 CREATE INDEX IF NOT EXISTS idx_title_type ON csfd_vod.fact_titles(title_type);
 CREATE INDEX IF NOT EXISTS idx_rating ON csfd_vod.fact_titles(rating);
 
@@ -81,6 +87,7 @@ CREATE TABLE IF NOT EXISTS csfd_vod.dim_vods (
     vod_id SERIAL PRIMARY KEY,
     title_id INTEGER NOT NULL REFERENCES csfd_vod.fact_titles(title_id) ON DELETE CASCADE,
     vod_platform VARCHAR(100) NOT NULL,
+    vod_url VARCHAR(500),
     UNIQUE(title_id, vod_platform)
 );
 
@@ -137,6 +144,19 @@ CREATE TABLE IF NOT EXISTS csfd_vod.dim_reviews (
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_title_id ON csfd_vod.dim_reviews(title_id);
+
+-- Dimension table: TMDB enrichment metadata
+CREATE TABLE IF NOT EXISTS csfd_vod.dim_tmdb (
+    tmdb_id INTEGER PRIMARY KEY,
+    title_id INTEGER NOT NULL REFERENCES csfd_vod.fact_titles(title_id) ON DELETE CASCADE,
+    poster_path VARCHAR(200),
+    backdrop_path VARCHAR(200),
+    trailer_youtube_id VARCHAR(50),
+    enriched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(title_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tmdb_title_id ON csfd_vod.dim_tmdb(title_id);
 
 -- Failed records (dead letter queue)
 CREATE TABLE IF NOT EXISTS csfd_vod.failed_records (

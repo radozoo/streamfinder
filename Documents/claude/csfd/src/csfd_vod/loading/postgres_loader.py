@@ -148,11 +148,13 @@ class PostgresLoader:
                 INSERT INTO csfd_vod.fact_titles
                     (url_id, title, year, link, date_added, run_id, updated_at,
                      title_en, plot, rating, image_url, title_type, parent_url,
-                     vod_date, distributor, premiere_detail, scraped_at)
+                     vod_date, distributor, premiere_detail, scraped_at,
+                     runtime_min, votes_count, trailer_url, age_rating)
                 VALUES
                     (:url_id, :title, :year, :link, :date_added, :run_id, CURRENT_TIMESTAMP,
                      :title_en, :plot, :rating, :image_url, :title_type, :parent_url,
-                     :vod_date, :distributor, :premiere_detail, :scraped_at)
+                     :vod_date, :distributor, :premiere_detail, :scraped_at,
+                     :runtime_min, :votes_count, :trailer_url, :age_rating)
                 ON CONFLICT (url_id)
                 DO UPDATE SET
                     title = EXCLUDED.title,
@@ -167,6 +169,10 @@ class PostgresLoader:
                     distributor = COALESCE(EXCLUDED.distributor, csfd_vod.fact_titles.distributor),
                     premiere_detail = EXCLUDED.premiere_detail,
                     scraped_at = EXCLUDED.scraped_at,
+                    runtime_min = EXCLUDED.runtime_min,
+                    votes_count = EXCLUDED.votes_count,
+                    trailer_url = EXCLUDED.trailer_url,
+                    age_rating = EXCLUDED.age_rating,
                     updated_at = CURRENT_TIMESTAMP,
                     run_id = :run_id
                 RETURNING title_id
@@ -191,6 +197,10 @@ class PostgresLoader:
                     "distributor": title.distributor,
                     "premiere_detail": title.premiere_detail,
                     "scraped_at": title.scraped_at,
+                    "runtime_min": title.runtime_min,
+                    "votes_count": title.votes_count,
+                    "trailer_url": title.trailer_url,
+                    "age_rating": title.age_rating,
                 },
             )
 
@@ -260,18 +270,20 @@ class PostgresLoader:
                             {"title_id": title_id, "country": country},
                         )
 
-            # VOD Platforms
+            # VOD Platforms + URLs
             if title.vod_platforms:
+                vod_url_map = json.loads(title.vod_urls) if title.vod_urls else {}
                 for vod in title.vod_platforms.split(", "):
                     vod = vod.strip()
                     if vod:
                         session.execute(
                             text("""
-                                INSERT INTO csfd_vod.dim_vods (title_id, vod_platform)
-                                VALUES (:title_id, :vod_platform)
-                                ON CONFLICT (title_id, vod_platform) DO NOTHING
+                                INSERT INTO csfd_vod.dim_vods (title_id, vod_platform, vod_url)
+                                VALUES (:title_id, :vod_platform, :vod_url)
+                                ON CONFLICT (title_id, vod_platform)
+                                DO UPDATE SET vod_url = EXCLUDED.vod_url
                             """),
-                            {"title_id": title_id, "vod_platform": vod},
+                            {"title_id": title_id, "vod_platform": vod, "vod_url": vod_url_map.get(vod)},
                         )
 
             # Tags

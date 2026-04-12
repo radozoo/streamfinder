@@ -87,7 +87,7 @@ class VODTitleParser:
             ).strip()
             data["title_en"] = title_en or None
 
-        # --- Year + Country (optional) — both from .origin text ---
+        # --- Year + Country + Runtime — all from .origin text ---
         # Structure: "USA / Velká Británie, (2021–2026), 24 h ..."
         origin = soup.select_one(".origin")
         if origin:
@@ -101,6 +101,18 @@ class VODTitleParser:
             country = re.sub(r"[,\s]+$", "", re.sub(r"\s+", " ", country_raw).strip())
             if country:
                 data["countries"] = country
+            # Runtime: "3 h 19 min" → 199, "44 min" → 44, "2 h" → 120
+            # Use main duration, not the per-episode range in parentheses
+            main_duration = re.split(r"\(", origin_text)[0]
+            hm_match = re.search(r"(\d+)\s*h\s*(\d+)\s*min", main_duration)
+            h_match = re.search(r"(\d+)\s*h(?!\s*\d+\s*min)", main_duration)
+            m_match = re.search(r"(\d+)\s*min", main_duration)
+            if hm_match:
+                data["runtime_min"] = int(hm_match.group(1)) * 60 + int(hm_match.group(2))
+            elif h_match:
+                data["runtime_min"] = int(h_match.group(1)) * 60
+            elif m_match:
+                data["runtime_min"] = int(m_match.group(1))
 
         # --- Genres — .genres a ---
         genre_selector = self.selectors.get("title_page", {}).get("genre_selector", ".genres a")
@@ -152,6 +164,14 @@ class VODTitleParser:
             if match:
                 data["rating"] = int(match.group(1))
 
+        # --- Votes count — .more-modal-ratings-fanclub text "Hodnocení467" ---
+        votes_elem = soup.select_one(".more-modal-ratings-fanclub")
+        if votes_elem:
+            votes_text = votes_elem.get_text(strip=True)
+            votes_match = re.search(r"Hodnocen[íi]\D*(\d+)", votes_text)
+            if votes_match:
+                data["votes_count"] = int(votes_match.group(1))
+
         # --- Tags — .box-tags a ---
         tag_elems = soup.select(".box-tags a")
         if tag_elems:
@@ -166,15 +186,36 @@ class VODTitleParser:
             if src:
                 data["image_url"] = src if src.startswith("http") else f"https://www.csfd.cz{src}"
 
-        # --- VOD Platforms — .film-vod-list a (exclude "více" and empty) ---
+        # --- VOD Platforms + URLs — .film-vod-list a ---
         vod_links = soup.select(".film-vod-list a")
-        platforms = [
-            a.get_text(strip=True)
-            for a in vod_links
-            if a.get_text(strip=True).lower() not in ("více", "")
-        ]
+        platforms = []
+        vod_url_map = {}
+        for a in vod_links:
+            name = a.get_text(strip=True)
+            if name.lower() in ("více", ""):
+                continue
+            platforms.append(name)
+            href = a.get("href", "")
+            if href and href.startswith("http"):
+                vod_url_map[name] = href
         if platforms:
             data["vod_platforms"] = ", ".join(platforms)
+        if vod_url_map:
+            data["vod_urls"] = json.dumps(vod_url_map, ensure_ascii=False)
+
+        # --- Trailer URL — first YouTube link on page ---
+        trailer_link = soup.select_one("a[href*='youtube.com/watch']")
+        if trailer_link:
+            data["trailer_url"] = trailer_link.get("href")
+
+        # --- Age rating — "od X let" in .origin or .film-info ---
+        for selector in (".origin", ".film-info"):
+            elem = soup.select_one(selector)
+            if elem:
+                age_match = re.search(r"od\s+(\d+)\s+let", elem.get_text())
+                if age_match:
+                    data["age_rating"] = f"od {age_match.group(1)} let"
+                    break
 
         # --- Premiere detail — .updated-box-content-padding containing "Na VOD od" ---
         for elem in soup.select(".updated-box-content-padding"):
