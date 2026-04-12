@@ -184,7 +184,12 @@ class VODTitleParser:
         if img_elem:
             src = img_elem.get("src")
             if src:
-                data["image_url"] = src if src.startswith("http") else f"https://www.csfd.cz{src}"
+                if src.startswith("http"):
+                    data["image_url"] = src
+                elif src.startswith("//"):
+                    data["image_url"] = "https:" + src
+                else:
+                    data["image_url"] = f"https://www.csfd.cz{src}"
 
         # --- VOD Platforms + URLs — .film-vod-list a ---
         vod_links = soup.select(".film-vod-list a")
