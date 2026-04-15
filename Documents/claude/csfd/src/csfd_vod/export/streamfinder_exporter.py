@@ -1,9 +1,10 @@
 """Streamfinder JSON exporter.
 
-Produces 3 files for the SvelteKit static site:
-  - titles_index.json   lightweight grid data (~2MB) used for Katalog + Kalendar
+Produces 4 files for the SvelteKit static site:
+  - titles_index.json   lightweight grid data (~3MB) used for Katalog + Kalendar
   - titles_detail.json  full per-title data (plot, reviews, crew, vod_urls)
-  - dimensions.json     flat lookup tables (genres, tags, platforms, countries)
+  - dimensions.json     flat lookup tables (genres, tags, platforms, countries, top crew)
+  - crew_index.json     crew lookup table for lazy-loaded filtering (~26k entries)
 """
 
 import json
@@ -26,7 +27,7 @@ def _slug(title: str, year: int | None) -> str:
     """Generate URL-safe slug: 'the-matrix-1999'."""
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower().strip())
     slug = slug.strip("-")
-    if year:
+    if year is not None:
         slug = f"{slug}-{year}"
     return slug
 
@@ -44,7 +45,7 @@ class StreamfinderExporter:
 
     def export(self, output_dir: str) -> dict[str, Any]:
         """
-        Export 3 JSON files to output_dir/.
+        Export 4 JSON files to output_dir/.
 
         Returns stats dict.
         """
@@ -68,26 +69,35 @@ class StreamfinderExporter:
 
             titles = self._load_titles(session)
 
-            # titles_index.json — lightweight, used for grid/calendar
-            index = self._build_index(titles, genres_map, tags_map, countries_map, vods_map, tmdb_map)
+            # Build crew lookup and per-title crew ID mapping
+            crew_list, title_crew_map = self._load_crew(
+                directors_map, actors_map, screenwriters_map, cinematographers_map, composers_map,
+            )
+
+            # crew_index.json — lazy-loaded crew lookup for filtering
+            _write(out / "crew_index.json", crew_list)
+
+            # titles_index.json — lightweight, used for grid/calendar (now includes crew_ids)
+            index = self._build_index(titles, genres_map, tags_map, countries_map, vods_map, tmdb_map, title_crew_map)
             _write(out / "titles_index.json", index)
 
-            # titles_detail.json — full per-title dict, keyed by url_id
+            # titles_detail.json — full per-title dict, keyed by '{title_id}-{slug}'
             detail = self._build_detail(
                 titles, genres_map, tags_map, countries_map, directors_map, actors_map,
                 screenwriters_map, cinematographers_map, composers_map, reviews_map, vods_map, tmdb_map,
             )
             _write(out / "titles_detail.json", detail)
 
-            # dimensions.json — sorted lists for facet panel
-            dimensions = self._build_dimensions(genres_map, tags_map, countries_map, vods_map)
+            # dimensions.json — sorted lists for facet panel (now includes top crew)
+            dimensions = self._build_dimensions(genres_map, tags_map, countries_map, vods_map, crew_list)
             _write(out / "dimensions.json", dimensions)
 
             stats = {
                 "success": True,
                 "output_dir": str(out.absolute()),
                 "total_titles": len(titles),
-                "files_written": ["titles_index.json", "titles_detail.json", "dimensions.json"],
+                "crew_entries": len(crew_list),
+                "files_written": ["titles_index.json", "titles_detail.json", "dimensions.json", "crew_index.json"],
                 "export_timestamp": datetime.utcnow().isoformat() + "Z",
             }
             logger.info("streamfinder_export_complete", **stats)
@@ -172,6 +182,68 @@ class StreamfinderExporter:
             }
         return result
 
+    def _load_crew(
+        self,
+        directors_map: dict[int, list[str]],
+        actors_map: dict[int, list[str]],
+        screenwriters_map: dict[int, list[str]],
+        cinematographers_map: dict[int, list[str]],
+        composers_map: dict[int, list[str]],
+    ) -> tuple[list[dict], dict[int, list[int]]]:
+        """Build crew lookup and per-title crew ID mapping.
+
+        Returns:
+            (crew_list, title_crew_map)
+            - crew_list: [{id, name, role, count}] sorted by count desc, filtered to 2+ appearances
+            - title_crew_map: {title_id: [crew_id, ...]} for titles_index.json
+        """
+        from collections import Counter
+
+        _ROLE_MAP = {
+            "directors": "rezie",
+            "actors": "herec",
+            "screenwriters": "scenar",
+            "cinematographers": "kamera",
+            "composers": "hudba",
+        }
+
+        # Count (name, role) occurrences across all titles
+        name_role_counts: Counter = Counter()
+        role_sources = {
+            "directors": directors_map,
+            "actors": actors_map,
+            "screenwriters": screenwriters_map,
+            "cinematographers": cinematographers_map,
+            "composers": composers_map,
+        }
+        for role_key, dim_map in role_sources.items():
+            role = _ROLE_MAP[role_key]
+            for names in dim_map.values():
+                for name in names:
+                    name_role_counts[(name, role)] += 1
+
+        # Filter to 2+ appearances, assign IDs, sort by count desc
+        crew_list: list[dict] = []
+        crew_id_lookup: dict[tuple[str, str], int] = {}
+        for idx, ((name, role), count) in enumerate(name_role_counts.most_common()):
+            if count < 2:
+                break
+            crew_id = idx + 1
+            crew_list.append({"id": crew_id, "name": name, "role": role, "count": count})
+            crew_id_lookup[(name, role)] = crew_id
+
+        # Build per-title crew_ids mapping
+        title_crew_map: dict[int, list[int]] = {}
+        for role_key, dim_map in role_sources.items():
+            role = _ROLE_MAP[role_key]
+            for title_id, names in dim_map.items():
+                for name in names:
+                    cid = crew_id_lookup.get((name, role))
+                    if cid is not None:
+                        title_crew_map.setdefault(title_id, []).append(cid)
+
+        return crew_list, title_crew_map
+
     # ------------------------------------------------------------------
     # Builders
     # ------------------------------------------------------------------
@@ -184,6 +256,7 @@ class StreamfinderExporter:
         countries_map: dict,
         vods_map: dict,
         tmdb_map: dict,
+        title_crew_map: dict[int, list[int]],
     ) -> list[dict]:
         """Lightweight index entry per title for grid/calendar views."""
         index = []
@@ -211,6 +284,7 @@ class StreamfinderExporter:
                 "tags": tags_map.get(tid, []),
                 "countries": countries_map.get(tid, []),
                 "platforms": [v["platform"] for v in vods_map.get(tid, [])],
+                "crew_ids": title_crew_map.get(tid, []),
                 "link": t["link"],
             })
         return index
@@ -230,7 +304,7 @@ class StreamfinderExporter:
         vods_map: dict,
         tmdb_map: dict,
     ) -> dict[str, dict]:
-        """Full detail dict keyed by url_id."""
+        """Full detail dict keyed by '{title_id}-{slug}'."""
         detail: dict[str, dict] = {}
         for t in titles:
             tid = t["title_id"]
@@ -251,9 +325,10 @@ class StreamfinderExporter:
                 if t.get("trailer_url") and "v=" in (t["trailer_url"] or "")
                 else None
             )
-            detail[t["url_id"]] = {
+            slug = _slug(t["title"], t["year"])
+            detail[f"{tid}-{slug}"] = {
                 "id": tid,
-                "slug": _slug(t["title"], t["year"]),
+                "slug": slug,
                 "title": t["title"],
                 "title_en": t["title_en"],
                 "year": t["year"],
@@ -287,6 +362,7 @@ class StreamfinderExporter:
         tags_map: dict,
         countries_map: dict,
         vods_map: dict,
+        crew_list: list[dict],
     ) -> dict[str, list[dict]]:
         """Sorted dimension lists for facet panels."""
         from collections import Counter
@@ -303,6 +379,7 @@ class StreamfinderExporter:
             "tags": sorted_counts(tags_map),
             "countries": sorted_counts(countries_map),
             "platforms": [{"name": k, "count": v} for k, v in platform_counts.most_common()],
+            "crew": [{"name": c["name"], "role": c["role"], "count": c["count"]} for c in crew_list[:50]],
         }
 
 

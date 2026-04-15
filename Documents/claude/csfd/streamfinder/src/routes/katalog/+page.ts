@@ -18,6 +18,9 @@ export const load: PageLoad = async ({ parent, url }) => {
 
 	const sortParam = get('sort');
 
+	// crew uses repeated params (?crew=A&crew=B) to handle names with commas
+	const crewParams = url.searchParams.getAll('crew').filter(Boolean);
+
 	return {
 		titles,
 		dimensions,
@@ -30,6 +33,7 @@ export const load: PageLoad = async ({ parent, url }) => {
 		initialYearFrom: parseNum(get('yearFrom')),
 		initialYearTo: parseNum(get('yearTo')),
 		initialRatingMin: parseNum(get('ratingMin')),
-		initialSort: (validSorts.includes(sortParam as SortKey) ? sortParam : 'vod_date') as SortKey
+		initialSort: (validSorts.includes(sortParam as SortKey) ? sortParam : 'vod_date') as SortKey,
+		initialCrew: crewParams,
 	};
 };

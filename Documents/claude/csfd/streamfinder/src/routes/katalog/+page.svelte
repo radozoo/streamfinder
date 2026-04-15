@@ -1,17 +1,23 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import type { TitleIndex, TitleDetail } from '$lib/types';
+	import type { TitleIndex, TitleDetail, CrewEntry } from '$lib/types';
 	import PosterCard from '$lib/components/PosterCard.svelte';
 	import TitleModal from '$lib/components/TitleModal.svelte';
+	import FilterBar from '$lib/components/FilterBar.svelte';
+	import ActiveFilters from '$lib/components/ActiveFilters.svelte';
+	import PillGrid from '$lib/components/PillGrid.svelte';
+	import AutocompleteDropdown from '$lib/components/AutocompleteDropdown.svelte';
+	import RangeSlider from '$lib/components/RangeSlider.svelte';
 	import { base } from '$app/paths';
 	import { untrack } from 'svelte';
+	import { loadCrewIndex, isCrewLoaded } from '$lib/data/crew';
 
 	let { data }: { data: PageData } = $props();
 
 	const PAGE_SIZE = 48;
+	const YEAR_MIN = 1920;
+	const YEAR_MAX = 2026;
 
-	// snapshot of initial URL filter state — untrack so $state initialization
-	// doesn't accidentally subscribe to the reactive `data` prop
 	const snap = untrack(() => data);
 
 	// ── Filter state ──────────────────────────────────────────────────────────
@@ -21,9 +27,10 @@
 	let selectedCountries = $state<string[]>(snap.initialCountries ?? []);
 	let selectedTags = $state<string[]>(snap.initialTags ?? []);
 	let selectedType = $state<string>(snap.initialType ?? '');
-	let yearFrom = $state<number | ''>(snap.initialYearFrom ?? '');
-	let yearTo = $state<number | ''>(snap.initialYearTo ?? '');
-	let ratingMin = $state<number | ''>(snap.initialRatingMin ?? '');
+	let selectedCrew = $state<string[]>(snap.initialCrew ?? []);
+	let yearFrom = $state<number>(snap.initialYearFrom ?? YEAR_MIN);
+	let yearTo = $state<number>(snap.initialYearTo ?? YEAR_MAX);
+	let ratingMin = $state<number>(snap.initialRatingMin ?? 0);
 	let sortBy = $state<'rating' | 'year' | 'vod_date' | 'votes'>(snap.initialSort ?? 'vod_date');
 
 	// ── Pagination ───────────────────────────────────────────────────────────
@@ -36,6 +43,29 @@
 	let modalTitle = $state<TitleDetail | null>(null);
 	let modalLoading = $state(false);
 	let detailCache: Record<string, TitleDetail> | null = null;
+
+	// ── Crew lazy loading ────────────────────────────────────────────────────
+	let crewItems = $state<CrewEntry[]>([]);
+	let crewLoading = $state(false);
+	let crewIdToName: Map<number, string> | null = null;
+
+	async function ensureCrewLoaded() {
+		if (isCrewLoaded()) return;
+		if (crewLoading) return;
+		crewLoading = true;
+		try {
+			const list = await loadCrewIndex();
+			crewItems = list;
+			crewIdToName = new Map(list.map((c) => [c.id, c.name]));
+		} finally {
+			crewLoading = false;
+		}
+	}
+
+	// If initial URL has crew params, load crew data immediately
+	if (snap.initialCrew && snap.initialCrew.length > 0) {
+		ensureCrewLoaded();
+	}
 
 	// ── Filtered + sorted titles ──────────────────────────────────────────────
 	let filtered = $derived.by(() => {
@@ -57,9 +87,14 @@
 				if (selectedTags.length && !selectedTags.some((tag) => t.tags.includes(tag)))
 					return false;
 				if (selectedType && t.title_type !== selectedType) return false;
-				if (yearFrom !== '' && (t.year ?? 0) < yearFrom) return false;
-				if (yearTo !== '' && (t.year ?? 9999) > yearTo) return false;
-				if (ratingMin !== '' && (t.rating ?? 0) < ratingMin) return false;
+				if (yearFrom > YEAR_MIN && (t.year ?? 0) < yearFrom) return false;
+				if (yearTo < YEAR_MAX && (t.year ?? 9999) > yearTo) return false;
+				if (ratingMin > 0 && (t.rating ?? 0) < ratingMin) return false;
+				// Crew filter
+				if (selectedCrew.length && crewIdToName) {
+					const titleCrewNames = (t.crew_ids ?? []).map((id) => crewIdToName!.get(id)).filter(Boolean);
+					if (!selectedCrew.some((name) => titleCrewNames.includes(name))) return false;
+				}
 				return true;
 			})
 			.sort((a, b) => {
@@ -70,7 +105,6 @@
 			});
 	});
 
-	// Reset page when filters change
 	$effect(() => {
 		filtered;
 		page = 1;
@@ -88,9 +122,10 @@
 		if (selectedCountries.length) params.set('country', selectedCountries.join(','));
 		if (selectedTags.length) params.set('tag', selectedTags.join(','));
 		if (selectedType) params.set('type', selectedType);
-		if (yearFrom !== '') params.set('yearFrom', String(yearFrom));
-		if (yearTo !== '') params.set('yearTo', String(yearTo));
-		if (ratingMin !== '') params.set('ratingMin', String(ratingMin));
+		for (const name of selectedCrew) params.append('crew', name);
+		if (yearFrom > YEAR_MIN) params.set('yearFrom', String(yearFrom));
+		if (yearTo < YEAR_MAX) params.set('yearTo', String(yearTo));
+		if (ratingMin > 0) params.set('ratingMin', String(ratingMin));
 		if (sortBy !== 'vod_date') params.set('sort', sortBy);
 		const str = params.toString();
 		history.replaceState(null, '', str ? '?' + str : location.pathname);
@@ -110,13 +145,13 @@
 		}))
 	);
 	let availableCountries = $derived(
-		data.dimensions.countries.slice(0, 12).map((c) => ({
+		data.dimensions.countries.slice(0, 30).map((c) => ({
 			...c,
 			hit: filtered.some((t) => t.countries.includes(c.name))
 		}))
 	);
 	let availableTags = $derived(
-		data.dimensions.tags.slice(0, 20).map((tag) => ({
+		data.dimensions.tags.slice(0, 50).map((tag) => ({
 			...tag,
 			hit: filtered.some((t) => t.tags.includes(tag.name))
 		}))
@@ -128,26 +163,9 @@
 		)
 	);
 
-	// ── Helpers ───────────────────────────────────────────────────────────────
-	function toggleGenre(name: string) {
-		selectedGenres = selectedGenres.includes(name)
-			? selectedGenres.filter((g) => g !== name)
-			: [...selectedGenres, name];
-	}
-	function togglePlatform(name: string) {
-		selectedPlatforms = selectedPlatforms.includes(name)
-			? selectedPlatforms.filter((p) => p !== name)
-			: [...selectedPlatforms, name];
-	}
-	function toggleCountry(name: string) {
-		selectedCountries = selectedCountries.includes(name)
-			? selectedCountries.filter((c) => c !== name)
-			: [...selectedCountries, name];
-	}
-	function toggleTag(name: string) {
-		selectedTags = selectedTags.includes(name)
-			? selectedTags.filter((t) => t !== name)
-			: [...selectedTags, name];
+	// ── Toggle helpers ────────────────────────────────────────────────────────
+	function toggle(arr: string[], name: string): string[] {
+		return arr.includes(name) ? arr.filter((v) => v !== name) : [...arr, name];
 	}
 
 	function clearAll() {
@@ -157,9 +175,10 @@
 		selectedCountries = [];
 		selectedTags = [];
 		selectedType = '';
-		yearFrom = '';
-		yearTo = '';
-		ratingMin = '';
+		selectedCrew = [];
+		yearFrom = YEAR_MIN;
+		yearTo = YEAR_MAX;
+		ratingMin = 0;
 		filterPanelOpen = false;
 	}
 
@@ -170,9 +189,10 @@
 			selectedCountries.length > 0 ||
 			selectedTags.length > 0 ||
 			selectedType !== '' ||
-			yearFrom !== '' ||
-			yearTo !== '' ||
-			ratingMin !== ''
+			selectedCrew.length > 0 ||
+			yearFrom > YEAR_MIN ||
+			yearTo < YEAR_MAX ||
+			ratingMin > 0
 	);
 
 	let activeFilterCount = $derived(
@@ -182,10 +202,36 @@
 			selectedCountries.length +
 			selectedTags.length +
 			(selectedType ? 1 : 0) +
-			(yearFrom !== '' ? 1 : 0) +
-			(yearTo !== '' ? 1 : 0) +
-			(ratingMin !== '' ? 1 : 0)
+			selectedCrew.length +
+			(yearFrom > YEAR_MIN ? 1 : 0) +
+			(yearTo < YEAR_MAX ? 1 : 0) +
+			(ratingMin > 0 ? 1 : 0)
 	);
+
+	// ── Active filter chips ──────────────────────────────────────────────────
+	let activeFilterList = $derived.by(() => {
+		const chips: { category: string; value: string }[] = [];
+		for (const g of selectedGenres) chips.push({ category: 'Žánr', value: g });
+		for (const p of selectedPlatforms) chips.push({ category: 'Platforma', value: p });
+		for (const c of selectedCountries) chips.push({ category: 'Krajina', value: c });
+		for (const t of selectedTags) chips.push({ category: 'Tag', value: t });
+		if (selectedType) chips.push({ category: 'Typ', value: selectedType });
+		for (const c of selectedCrew) chips.push({ category: 'Tvůrce', value: c });
+		if (yearFrom > YEAR_MIN || yearTo < YEAR_MAX) chips.push({ category: 'Rok', value: `${yearFrom}–${yearTo}` });
+		if (ratingMin > 0) chips.push({ category: 'Hodnocení', value: `${ratingMin}%+` });
+		return chips;
+	});
+
+	function removeFilter(category: string, value: string) {
+		if (category === 'Žánr') selectedGenres = selectedGenres.filter((g) => g !== value);
+		else if (category === 'Platforma') selectedPlatforms = selectedPlatforms.filter((p) => p !== value);
+		else if (category === 'Krajina') selectedCountries = selectedCountries.filter((c) => c !== value);
+		else if (category === 'Tag') selectedTags = selectedTags.filter((t) => t !== value);
+		else if (category === 'Typ') selectedType = '';
+		else if (category === 'Tvůrce') selectedCrew = selectedCrew.filter((c) => c !== value);
+		else if (category === 'Rok') { yearFrom = YEAR_MIN; yearTo = YEAR_MAX; }
+		else if (category === 'Hodnocení') ratingMin = 0;
+	}
 
 	// ── Modal ─────────────────────────────────────────────────────────────────
 	async function openModal(t: TitleIndex) {
@@ -199,32 +245,16 @@
 			const key = `${t.id}-${t.slug}`;
 			modalTitle = detailCache![key] ?? {
 				...t,
-				plot: null,
-				backdrop: null,
-				trailer_youtube_id: null,
-				age_rating: null,
-				directors: [],
-				actors: [],
-				screenwriters: [],
-				cinematographers: [],
-				composers: [],
-				reviews: [],
-				vods: []
+				plot: null, backdrop: null, trailer_youtube_id: null, age_rating: null,
+				directors: [], actors: [], screenwriters: [], cinematographers: [], composers: [],
+				reviews: [], vods: []
 			};
 		} catch {
 			modalTitle = {
 				...t,
-				plot: null,
-				backdrop: null,
-				trailer_youtube_id: null,
-				age_rating: null,
-				directors: [],
-				actors: [],
-				screenwriters: [],
-				cinematographers: [],
-				composers: [],
-				reviews: [],
-				vods: []
+				plot: null, backdrop: null, trailer_youtube_id: null, age_rating: null,
+				directors: [], actors: [], screenwriters: [], cinematographers: [], composers: [],
+				reviews: [], vods: []
 			};
 		} finally {
 			modalLoading = false;
@@ -269,167 +299,67 @@
 		</select>
 	</div>
 
-	<div class="katalog-body">
-		<!-- Sidebar filters (desktop) -->
-		<aside class="sidebar">
-			{#if hasFilters}
-				<button class="clear-btn" onclick={clearAll}>✕ Zrušit filtry</button>
-			{/if}
-
-			<!-- Type -->
-			<div class="filter-group">
-				<h3 class="filter-label">Typ</h3>
-				<div class="pill-group">
-					{#each typeOptions as type}
-						<button
-							class="pill"
-							class:active={selectedType === type}
-							onclick={() => (selectedType = selectedType === type ? '' : type)}
-						>
-							{type}
-						</button>
-					{/each}
-				</div>
-			</div>
-
-			<!-- Platforms -->
-			<div class="filter-group">
-				<h3 class="filter-label">Platforma</h3>
-				<div class="pill-group">
-					{#each availablePlatforms.slice(0, 12) as p}
-						<button
-							class="pill"
-							class:active={selectedPlatforms.includes(p.name)}
-							class:disabled={!p.hit && !selectedPlatforms.includes(p.name)}
-							onclick={() => togglePlatform(p.name)}
-						>
-							{p.name}
-						</button>
-					{/each}
-				</div>
-			</div>
-
-			<!-- Genres -->
-			<div class="filter-group">
-				<h3 class="filter-label">Žánr</h3>
-				<div class="pill-group">
-					{#each availableGenres.slice(0, 20) as g}
-						<button
-							class="pill"
-							class:active={selectedGenres.includes(g.name)}
-							class:disabled={!g.hit && !selectedGenres.includes(g.name)}
-							onclick={() => toggleGenre(g.name)}
-						>
-							{g.name}
-						</button>
-					{/each}
-				</div>
-			</div>
-
-			<!-- Countries -->
-			{#if data.dimensions.countries.length > 0}
-				<div class="filter-group">
-					<h3 class="filter-label">Země</h3>
-					<div class="pill-group">
-						{#each availableCountries as c}
-							<button
-								class="pill"
-								class:active={selectedCountries.includes(c.name)}
-								class:disabled={!c.hit && !selectedCountries.includes(c.name)}
-								onclick={() => toggleCountry(c.name)}
-							>
-								{c.name}
-							</button>
-						{/each}
-					</div>
-				</div>
-			{/if}
-
-			<!-- Tags -->
-			{#if data.dimensions.tags.length > 0}
-				<div class="filter-group">
-					<h3 class="filter-label">Tagy</h3>
-					<div class="pill-group">
-						{#each availableTags as tag}
-							<button
-								class="pill"
-								class:active={selectedTags.includes(tag.name)}
-								class:disabled={!tag.hit && !selectedTags.includes(tag.name)}
-								onclick={() => toggleTag(tag.name)}
-							>
-								{tag.name}
-							</button>
-						{/each}
-					</div>
-				</div>
-			{/if}
-
-			<!-- Year range -->
-			<div class="filter-group">
-				<h3 class="filter-label">Rok výroby</h3>
-				<div class="year-range">
-					<input
-						class="num-input"
-						type="number"
-						placeholder="Od"
-						min="1900"
-						max="2030"
-						bind:value={yearFrom}
-					/>
-					<span>–</span>
-					<input
-						class="num-input"
-						type="number"
-						placeholder="Do"
-						min="1900"
-						max="2030"
-						bind:value={yearTo}
-					/>
-				</div>
-			</div>
-
-			<!-- Min rating -->
-			<div class="filter-group">
-				<h3 class="filter-label">Min. hodnocení</h3>
-				<div class="year-range">
-					<input
-						class="num-input"
-						type="number"
-						placeholder="0"
-						min="0"
-						max="100"
-						bind:value={ratingMin}
-					/>
-					<span>%</span>
-				</div>
-			</div>
-		</aside>
-
-		<!-- Poster grid -->
-		<section class="grid-area">
-			{#if filtered.length === 0}
-				<div class="empty-state">
-					<p>Žádné tituly nevyhovují filtrům.</p>
-					<button class="clear-btn" onclick={clearAll}>Zrušit filtry</button>
-				</div>
-			{:else}
-				<div class="poster-grid">
-					{#each displayedTitles as title (title.id)}
-						<PosterCard {title} onclick={openModal} />
-					{/each}
-				</div>
-
-				{#if hasMore}
-					<div class="load-more-row">
-						<button class="load-more-btn" onclick={() => page++}>
-							Načíst další
-							<span class="load-more-count">({filtered.length - displayedTitles.length} zbývá)</span>
-						</button>
-					</div>
-				{/if}
-			{/if}
-		</section>
+	<!-- Horizontal filter bar (desktop) -->
+	<div class="filter-bar-row">
+		<FilterBar
+			genres={availableGenres}
+			platforms={availablePlatforms}
+			countries={availableCountries}
+			tags={availableTags}
+			{typeOptions}
+			{crewItems}
+			{crewLoading}
+			onCrewHover={ensureCrewLoaded}
+			{selectedGenres}
+			{selectedPlatforms}
+			{selectedCountries}
+			{selectedTags}
+			{selectedType}
+			{selectedCrew}
+			{yearFrom}
+			{yearTo}
+			{ratingMin}
+			yearMin={YEAR_MIN}
+			yearMax={YEAR_MAX}
+			onToggleGenre={(name) => (selectedGenres = toggle(selectedGenres, name))}
+			onTogglePlatform={(name) => (selectedPlatforms = toggle(selectedPlatforms, name))}
+			onToggleCountry={(name) => (selectedCountries = toggle(selectedCountries, name))}
+			onToggleTag={(name) => (selectedTags = toggle(selectedTags, name))}
+			onToggleType={(name) => (selectedType = selectedType === name ? '' : name)}
+			onSelectCrew={(name) => (selectedCrew = [...selectedCrew, name])}
+			onRemoveCrew={(name) => (selectedCrew = selectedCrew.filter((c) => c !== name))}
+			onYearChange={(from, to) => { yearFrom = from; yearTo = to; }}
+			onRatingChange={(from) => { ratingMin = from; }}
+		/>
 	</div>
+
+	<!-- Active filter chips -->
+	<ActiveFilters filters={activeFilterList} onRemove={removeFilter} onClearAll={clearAll} />
+
+	<!-- Poster grid -->
+	<section class="grid-area">
+		{#if filtered.length === 0}
+			<div class="empty-state">
+				<p>Žádné tituly nevyhovují filtrům.</p>
+				<button class="clear-btn" onclick={clearAll}>Zrušit filtry</button>
+			</div>
+		{:else}
+			<div class="poster-grid">
+				{#each displayedTitles as title (title.id)}
+					<PosterCard {title} onclick={openModal} />
+				{/each}
+			</div>
+
+			{#if hasMore}
+				<div class="load-more-row">
+					<button class="load-more-btn" onclick={() => page++}>
+						Načíst další
+						<span class="load-more-count">({filtered.length - displayedTitles.length} zbývá)</span>
+					</button>
+				</div>
+			{/if}
+		{/if}
+	</section>
 </div>
 
 <!-- Mobile FAB -->
@@ -451,103 +381,98 @@
 
 <!-- Mobile filter sheet -->
 {#if filterPanelOpen}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="sheet-backdrop" onclick={() => (filterPanelOpen = false)} onkeydown={(e) => e.key === 'Escape' && (filterPanelOpen = false)} role="presentation" tabindex="-1">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="filter-sheet" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Filtry" tabindex="-1">
 			<div class="sheet-header">
 				<h2 class="sheet-title">Filtry</h2>
 				{#if hasFilters}
 					<button class="clear-btn" onclick={clearAll}>Zrušit filtry</button>
 				{/if}
-				<button class="sheet-close" onclick={() => (filterPanelOpen = false)} aria-label="Zavřít">✕</button>
+				<button class="sheet-close" onclick={() => (filterPanelOpen = false)} aria-label="Zavřít">&#x2715;</button>
 			</div>
 
 			<div class="sheet-body">
-				<!-- Type -->
 				<div class="filter-group">
 					<h3 class="filter-label">Typ</h3>
-					<div class="pill-group">
-						{#each typeOptions as type}
-							<button
-								class="pill"
-								class:active={selectedType === type}
-								onclick={() => (selectedType = selectedType === type ? '' : type)}
-							>
-								{type}
-							</button>
-						{/each}
-					</div>
+					<PillGrid
+						items={typeOptions.map((t) => ({ name: t, hit: true }))}
+						selected={selectedType ? [selectedType] : []}
+						onToggle={(name) => (selectedType = selectedType === name ? '' : name)}
+					/>
 				</div>
 
-				<!-- Platforms -->
 				<div class="filter-group">
 					<h3 class="filter-label">Platforma</h3>
-					<div class="pill-group">
-						{#each availablePlatforms.slice(0, 12) as p}
-							<button
-								class="pill"
-								class:active={selectedPlatforms.includes(p.name)}
-								class:disabled={!p.hit && !selectedPlatforms.includes(p.name)}
-								onclick={() => togglePlatform(p.name)}
-							>
-								{p.name}
-							</button>
-						{/each}
-					</div>
+					<PillGrid items={availablePlatforms.slice(0, 12)} selected={selectedPlatforms} onToggle={(name) => (selectedPlatforms = toggle(selectedPlatforms, name))} />
 				</div>
 
-				<!-- Genres -->
 				<div class="filter-group">
 					<h3 class="filter-label">Žánr</h3>
-					<div class="pill-group">
-						{#each availableGenres.slice(0, 20) as g}
-							<button
-								class="pill"
-								class:active={selectedGenres.includes(g.name)}
-								class:disabled={!g.hit && !selectedGenres.includes(g.name)}
-								onclick={() => toggleGenre(g.name)}
-							>
-								{g.name}
-							</button>
-						{/each}
-					</div>
+					<PillGrid items={availableGenres.slice(0, 20)} selected={selectedGenres} onToggle={(name) => (selectedGenres = toggle(selectedGenres, name))} />
 				</div>
 
-				<!-- Countries -->
 				{#if data.dimensions.countries.length > 0}
 					<div class="filter-group">
 						<h3 class="filter-label">Země</h3>
-						<div class="pill-group">
-							{#each availableCountries as c}
-								<button
-									class="pill"
-									class:active={selectedCountries.includes(c.name)}
-									class:disabled={!c.hit && !selectedCountries.includes(c.name)}
-									onclick={() => toggleCountry(c.name)}
-								>
-									{c.name}
-								</button>
-							{/each}
-						</div>
+						<PillGrid items={availableCountries} selected={selectedCountries} onToggle={(name) => (selectedCountries = toggle(selectedCountries, name))} />
 					</div>
 				{/if}
 
-				<!-- Year range -->
 				<div class="filter-group">
-					<h3 class="filter-label">Rok výroby</h3>
-					<div class="year-range">
-						<input class="num-input" type="number" placeholder="Od" min="1900" max="2030" bind:value={yearFrom} />
-						<span>–</span>
-						<input class="num-input" type="number" placeholder="Do" min="1900" max="2030" bind:value={yearTo} />
-					</div>
+					<h3 class="filter-label">Tagy</h3>
+					<AutocompleteDropdown
+						items={availableTags}
+						selected={selectedTags}
+						onSelect={(name) => (selectedTags = toggle(selectedTags, name))}
+						onRemove={(name) => (selectedTags = toggle(selectedTags, name))}
+						placeholder="Hledat tagy…"
+					/>
 				</div>
 
-				<!-- Min rating -->
+				<div class="filter-group">
+					<h3 class="filter-label">Tvůrci</h3>
+					{#if !isCrewLoaded()}
+						<button class="load-crew-btn" onclick={ensureCrewLoaded}>
+							{crewLoading ? 'Načítání…' : 'Načíst tvůrce'}
+						</button>
+					{:else}
+						<AutocompleteDropdown
+							items={crewItems}
+							selected={selectedCrew}
+							onSelect={(name) => (selectedCrew = [...selectedCrew, name])}
+							onRemove={(name) => (selectedCrew = selectedCrew.filter((c) => c !== name))}
+							placeholder="Hledat herce, režiséry…"
+							formatItem={(item) => `${item.name} (${item.role ?? ''}, ${item.count ?? ''})`}
+						/>
+					{/if}
+				</div>
+
+				<div class="filter-group">
+					<h3 class="filter-label">Rok výroby</h3>
+					<RangeSlider
+						min={YEAR_MIN}
+						max={YEAR_MAX}
+						step={1}
+						valueFrom={yearFrom}
+						valueTo={yearTo}
+						onChange={(from, to) => { yearFrom = from; yearTo = to; }}
+					/>
+				</div>
+
 				<div class="filter-group">
 					<h3 class="filter-label">Min. hodnocení</h3>
-					<div class="year-range">
-						<input class="num-input" type="number" placeholder="0" min="0" max="100" bind:value={ratingMin} />
-						<span>%</span>
-					</div>
+					<RangeSlider
+						min={0}
+						max={100}
+						step={5}
+						valueFrom={ratingMin}
+						valueTo={100}
+						onChange={(from) => { ratingMin = from; }}
+						single
+						suffix="%"
+					/>
 				</div>
 			</div>
 
@@ -578,7 +503,7 @@
 	.search-bar {
 		display: flex;
 		gap: 0.75rem;
-		margin-bottom: 1.5rem;
+		margin-bottom: 1rem;
 	}
 
 	.search-input {
@@ -607,20 +532,8 @@
 		outline: none;
 	}
 
-	.katalog-body {
-		display: grid;
-		grid-template-columns: 220px 1fr;
-		gap: 2rem;
-		align-items: start;
-	}
-
-	/* Sidebar */
-	.sidebar {
-		position: sticky;
-		top: 72px;
-		display: flex;
-		flex-direction: column;
-		gap: 1.25rem;
+	.filter-bar-row {
+		margin-bottom: 1rem;
 	}
 
 	.filter-group {
@@ -637,28 +550,19 @@
 		color: var(--text-muted);
 	}
 
-	.pill-group {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem;
+	.poster-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		gap: 1rem;
 	}
 
-	.year-range {
+	.empty-state {
 		display: flex;
+		flex-direction: column;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 1rem;
+		padding: 4rem 0;
 		color: var(--text-muted);
-	}
-
-	.num-input {
-		width: 70px;
-		background: var(--navy-700);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-sm);
-		padding: 0.35rem 0.5rem;
-		color: var(--text-primary);
-		font-size: 0.85rem;
-		outline: none;
 	}
 
 	.clear-btn {
@@ -678,22 +582,6 @@
 		border-color: var(--text-muted);
 	}
 
-	.poster-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-		gap: 1rem;
-	}
-
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 1rem;
-		padding: 4rem 0;
-		color: var(--text-muted);
-	}
-
-	/* Load more */
 	.load-more-row {
 		display: flex;
 		justify-content: center;
@@ -720,6 +608,16 @@
 		color: var(--text-muted);
 		font-size: 0.8rem;
 		margin-left: 0.4rem;
+	}
+
+	.load-crew-btn {
+		background: var(--navy-700);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		padding: 0.5rem 1rem;
+		color: var(--text-secondary);
+		font-size: 0.82rem;
+		cursor: pointer;
 	}
 
 	/* Mobile FAB */
@@ -833,22 +731,11 @@
 		opacity: 0.9;
 	}
 
-	/* Responsive */
-	@media (max-width: 900px) {
-		.katalog-body {
-			grid-template-columns: 1fr;
-		}
-
-		.sidebar {
-			display: none;
-		}
-
+	@media (max-width: 640px) {
 		.filter-fab {
 			display: flex;
 		}
-	}
 
-	@media (max-width: 640px) {
 		.poster-grid {
 			grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
 		}
