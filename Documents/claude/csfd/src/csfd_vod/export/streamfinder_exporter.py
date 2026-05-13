@@ -319,12 +319,8 @@ class StreamfinderExporter:
                 if tmdb.get("backdrop_path")
                 else None
             )
-            trailer = tmdb.get("trailer_youtube_id") or (
-                # Extract YouTube ID from detail-page trailer_url if TMDB has none
-                re.search(r"v=([^&]+)", t["trailer_url"]).group(1)
-                if t.get("trailer_url") and "v=" in (t["trailer_url"] or "")
-                else None
-            )
+            yt_match = re.search(r"v=([^&#]+)", t.get("trailer_url") or "")
+            trailer = tmdb.get("trailer_youtube_id") or (yt_match.group(1) if yt_match else None)
             slug = _slug(t["title"], t["year"])
             detail[f"{tid}-{slug}"] = {
                 "id": tid,
