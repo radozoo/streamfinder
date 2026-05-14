@@ -1,0 +1,243 @@
+/* Streamfinder — global styles */
+/* Identity: deep navy + warm amber, cinema-archive feel */
+
+:root {
+	--navy-900: #080e1e;
+	--navy-800: #0d1526;
+	--navy-700: #131d33;
+	--navy-600: #1a2540;
+	--navy-500: #253059;
+	--amber: #f5a623;
+	--amber-dim: #c47e0c;
+	--text-primary: #f0ede8;
+	--text-secondary: #8a92a6;
+	--text-muted: #4a5568;
+	--border: rgba(255, 255, 255, 0.08);
+	--card-bg: rgba(13, 21, 38, 0.8);
+	--radius: 8px;
+	--radius-sm: 4px;
+}
+
+*, *::before, *::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html {
+	font-size: 16px;
+	scroll-behavior: smooth;
+}
+
+body {
+	background-color: var(--navy-900);
+	color: var(--text-primary);
+	font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	line-height: 1.6;
+	-webkit-font-smoothing: antialiased;
+}
+
+a {
+	color: inherit;
+	text-decoration: none;
+}
+
+/* Poster cards */
+.poster-card {
+	position: relative;
+	border-radius: var(--radius);
+	overflow: hidden;
+	background: var(--navy-700);
+	cursor: pointer;
+	transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.poster-card:hover {
+	transform: translateY(-4px);
+	box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+}
+
+.poster-card img {
+	width: 100%;
+	aspect-ratio: 2/3;
+	object-fit: cover;
+	display: block;
+}
+
+.poster-card .poster-placeholder {
+	width: 100%;
+	aspect-ratio: 2/3;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: var(--navy-600);
+	color: var(--text-muted);
+	font-size: 0.75rem;
+	padding: 1rem;
+	text-align: center;
+}
+
+.poster-card .card-info {
+	padding: 0.6rem 0.75rem 0.75rem;
+}
+
+.poster-card .card-title {
+	font-size: 0.85rem;
+	font-weight: 600;
+	color: var(--text-primary);
+	line-height: 1.3;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.poster-card .card-meta {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin-top: 0.35rem;
+}
+
+.poster-card .card-rating {
+	font-size: 0.8rem;
+	font-weight: 700;
+	color: var(--amber);
+}
+
+.poster-card .card-year {
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
+/* Platform badge */
+.vod-badge {
+	display: inline-block;
+	font-size: 0.65rem;
+	font-weight: 600;
+	padding: 2px 6px;
+	border-radius: var(--radius-sm);
+	background: var(--navy-500);
+	color: var(--text-secondary);
+	white-space: nowrap;
+}
+
+/* Genre pill */
+.pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 0.78rem;
+	padding: 4px 10px;
+	border-radius: 999px;
+	background: var(--navy-600);
+	color: var(--text-secondary);
+	cursor: pointer;
+	border: 1px solid transparent;
+	transition: all 0.15s;
+	white-space: nowrap;
+}
+
+.pill:hover {
+	background: var(--navy-500);
+	color: var(--text-primary);
+	border-color: var(--border);
+}
+
+.pill.active {
+	background: var(--amber);
+	color: var(--navy-900);
+	font-weight: 600;
+}
+
+.pill.disabled {
+	opacity: 0.35;
+	pointer-events: none;
+}
+
+/* Rating color classes */
+.rating-great { color: #4ade80; }
+.rating-good { color: var(--amber); }
+.rating-avg { color: var(--text-secondary); }
+
+/* Section heading */
+.section-title {
+	font-family: 'Playfair Display', Georgia, serif;
+	font-size: 1.35rem;
+	font-weight: 700;
+	color: var(--text-primary);
+	letter-spacing: -0.02em;
+	margin-bottom: 1.25rem;
+}
+
+/* Horizontal scroll row */
+.scroll-row {
+	display: flex;
+	gap: 1rem;
+	overflow-x: auto;
+	padding-bottom: 0.75rem;
+	scroll-snap-type: x proximity;
+	scrollbar-width: thin;
+	scrollbar-color: var(--navy-500) transparent;
+}
+
+.scroll-row > * {
+	scroll-snap-align: start;
+}
+
+.scroll-row::-webkit-scrollbar {
+	height: 4px;
+}
+
+.scroll-row::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.scroll-row::-webkit-scrollbar-thumb {
+	background: var(--navy-500);
+	border-radius: 2px;
+}
+
+.scroll-row .poster-card {
+	flex: 0 0 160px;
+}
+
+@media (max-width: 640px) {
+	.scroll-row .poster-card {
+		flex: 0 0 130px;
+	}
+}
+
+/* Page container */
+.page-container {
+	max-width: 1400px;
+	margin: 0 auto;
+	padding: 2rem 2rem;
+}
+
+@media (max-width: 640px) {
+	.page-container {
+		padding: 1.5rem 1rem;
+	}
+}
+
+/* Star rating display */
+.stars {
+	display: inline-flex;
+	gap: 2px;
+	color: var(--amber);
+	font-size: 0.85rem;
+}
+
+/* Film grain overlay */
+body::after {
+	content: '';
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	z-index: 9999;
+	opacity: 0.03;
+	mix-blend-mode: overlay;
+	background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+	background-size: 128px 128px;
+}

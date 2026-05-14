@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+# Allow SvelteKit src/lib (frontend library code)
+!streamfinder/src/lib/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# Node / SvelteKit
+node_modules/
+.svelte-kit/
+.output/
+.vercel/
+.netlify/
+
+# IDE / workspace
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+!.env.example
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Database
+*.db
+*.sqlite
+postgres_data/
+
+# HTML cache (top-level only, not src/csfd_vod/cache/ module)
+/cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pickle files
+*.pkl
+*.pickle
+
+# Project-local artifacts and personal notes
+logs/
+ideas and notes/
+old/
+dashboard/
