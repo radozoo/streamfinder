@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { TitleDetail } from '$lib/types';
-	import { base } from '$app/paths';
 
 	interface Props {
 		title: TitleDetail | null;
@@ -10,11 +9,26 @@
 
 	let { title, loading, onclose }: Props = $props();
 
+	const ACTOR_LIMIT = 20;
+	let actorsExpanded = $state(false);
+
+	// Reset the "více" toggle whenever a different title opens
+	$effect(() => {
+		title?.id;
+		actorsExpanded = false;
+	});
+
 	function ratingColor(r: number | null) {
 		if (!r) return 'var(--text-muted)';
 		if (r >= 70) return '#4caf50';
 		if (r >= 50) return 'var(--amber)';
 		return '#e57373';
+	}
+
+	function formatDate(d: string | null) {
+		if (!d) return null;
+		const [y, mo, day] = d.split('-');
+		return `${day}. ${mo}. ${y}`;
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -64,6 +78,9 @@
 										{title.rating} %
 									</span>
 								{/if}
+								{#if title.votes_count}
+									<span class="meta-sep">({title.votes_count.toLocaleString('cs')} hodnocení)</span>
+								{/if}
 								{#if title.year}
 									<span class="meta-sep">{title.year}</span>
 								{/if}
@@ -78,23 +95,19 @@
 								{/if}
 							</div>
 
-							{#if title.genres.length}
+							{#if title.genres.length || title.countries.length}
 								<div class="modal-genres">
 									{#each title.genres as g}
 										<span class="pill">{g}</span>
+									{/each}
+									{#each title.countries as c}
+										<span class="pill country-pill">{c}</span>
 									{/each}
 								</div>
 							{/if}
 
 							{#if title.plot}
 								<p class="modal-plot">{title.plot}</p>
-							{/if}
-
-							{#if title.directors.length}
-								<p class="modal-crew"><strong>Režie:</strong> {title.directors.join(', ')}</p>
-							{/if}
-							{#if title.actors.length}
-								<p class="modal-crew"><strong>Hrají:</strong> {title.actors.slice(0, 6).join(', ')}</p>
 							{/if}
 
 							{#if title.vods.length}
@@ -111,11 +124,44 @@
 								</div>
 							{/if}
 
-							<a class="detail-link" href="{base}/titul/{title.id}/{title.slug}">
-								Zobrazit detail →
-							</a>
+							{#if title.vod_date}
+								<p class="modal-vod-date">Na VOD od {formatDate(title.vod_date)}</p>
+							{/if}
 						</div>
 					</div>
+
+					{#if title.directors.length || title.screenwriters.length || title.cinematographers.length || title.composers.length || title.actors.length}
+						<div class="modal-section">
+							<h3 class="filter-label">Tvůrci</h3>
+							<dl class="modal-crew-list">
+								{#if title.directors.length}
+									<div class="crew-row"><dt>Režie</dt><dd>{title.directors.join(', ')}</dd></div>
+								{/if}
+								{#if title.screenwriters.length}
+									<div class="crew-row"><dt>Scénář</dt><dd>{title.screenwriters.join(', ')}</dd></div>
+								{/if}
+								{#if title.cinematographers.length}
+									<div class="crew-row"><dt>Kamera</dt><dd>{title.cinematographers.join(', ')}</dd></div>
+								{/if}
+								{#if title.composers.length}
+									<div class="crew-row"><dt>Hudba</dt><dd>{title.composers.join(', ')}</dd></div>
+								{/if}
+								{#if title.actors.length}
+									<div class="crew-row">
+										<dt>Hrají</dt>
+										<dd>
+											{(actorsExpanded ? title.actors : title.actors.slice(0, ACTOR_LIMIT)).join(', ')}
+											{#if title.actors.length > ACTOR_LIMIT}
+												<button class="more-toggle" type="button" onclick={() => (actorsExpanded = !actorsExpanded)}>
+													{actorsExpanded ? 'méně' : `+ ${title.actors.length - ACTOR_LIMIT} více`}
+												</button>
+											{/if}
+										</dd>
+									</div>
+								{/if}
+							</dl>
+						</div>
+					{/if}
 
 					{#if title.trailer_youtube_id}
 						<div class="modal-trailer">
@@ -132,7 +178,7 @@
 					{#if title.reviews.length}
 						<div class="modal-reviews">
 							<h3 class="filter-label">Recenze</h3>
-							{#each title.reviews.slice(0, 2) as review}
+							{#each title.reviews as review}
 								<div class="review-item">
 									{#if review.stars !== null}
 										<div class="stars">{'★'.repeat(review.stars)}{'☆'.repeat(5 - review.stars)}</div>
@@ -141,11 +187,17 @@
 										<span class="review-author">{review.author}</span>
 									{/if}
 									{#if review.text}
-										<p class="review-text">{review.text.slice(0, 280)}{review.text.length > 280 ? '…' : ''}</p>
+										<p class="review-text">{review.text}</p>
 									{/if}
 								</div>
 							{/each}
 						</div>
+					{/if}
+
+					{#if title.link}
+						<a class="modal-csfd-link" href={title.link} target="_blank" rel="noopener noreferrer">
+							Otevřít na ČSFD →
+						</a>
 					{/if}
 				</div>
 			{/if}
@@ -306,14 +358,8 @@
 		margin-bottom: 0.75rem;
 	}
 
-	.modal-crew {
-		font-size: 0.85rem;
-		color: var(--text-muted);
-		margin-bottom: 0.35rem;
-	}
-
-	.modal-crew strong {
-		color: var(--text-secondary);
+	.country-pill {
+		opacity: 0.6;
 	}
 
 	.modal-vods {
@@ -341,16 +387,64 @@
 		opacity: 0.85;
 	}
 
-	.detail-link {
-		display: inline-block;
-		margin-top: 1rem;
-		color: var(--amber);
+	.modal-vod-date {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		margin-top: 0.75rem;
+	}
+
+	.modal-section {
+		margin-top: 1.5rem;
+	}
+
+	.modal-crew-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.crew-row {
+		display: grid;
+		grid-template-columns: 90px 1fr;
+		gap: 0.5rem;
+	}
+
+	.crew-row dt {
+		color: var(--text-muted);
 		font-size: 0.85rem;
+	}
+
+	.crew-row dd {
+		color: var(--text-secondary);
+		font-size: 0.85rem;
+		line-height: 1.5;
+	}
+
+	.more-toggle {
+		background: none;
+		border: none;
+		padding: 0;
+		margin-left: 0.35rem;
+		color: var(--amber);
+		font-size: 0.8rem;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+
+	.more-toggle:hover {
+		text-decoration: underline;
+	}
+
+	.modal-csfd-link {
+		display: inline-block;
+		margin-top: 1.5rem;
+		color: var(--text-muted);
+		font-size: 0.8rem;
 		text-decoration: none;
 	}
 
-	.detail-link:hover {
-		text-decoration: underline;
+	.modal-csfd-link:hover {
+		color: var(--amber);
 	}
 
 	.modal-trailer {
