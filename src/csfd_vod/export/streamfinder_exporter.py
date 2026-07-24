@@ -145,9 +145,16 @@ class StreamfinderExporter:
         return result
 
     def _load_vods(self, session: Session) -> dict[int, list[dict]]:
-        """Load VOD platforms per title as [{platform, url}]."""
+        """Load VOD platforms per title as [{platform, url}].
+
+        "VOD" is a generic ČSFD category, not a real streaming service — it is
+        always emitted alongside the actual platform (Netflix, HBO Max, …), so
+        it is dropped here to keep cards, filters and detail clean.
+        """
         result: dict[int, list[dict]] = {}
         for row in session.execute(text("SELECT title_id, vod_platform, vod_url FROM csfd_vod.dim_vods")):
+            if row[1] == "VOD":
+                continue
             result.setdefault(row[0], []).append({"platform": row[1], "url": row[2]})
         return result
 

@@ -46,22 +46,25 @@ class TMDBEnricher:
             for i, (title_id, title, title_en, year) in enumerate(titles):
                 try:
                     result = self._enrich_one(session, title_id, title, title_en, year)
+                    # Commit per title so one failure (e.g. a duplicate TMDB match)
+                    # can be rolled back in isolation without poisoning the rest of
+                    # the run with InFailedSqlTransaction.
+                    session.commit()
                     if result:
                         stats["enriched"] += 1
                     else:
                         stats["skipped"] += 1
 
                     if (i + 1) % 50 == 0:
-                        session.commit()
                         logger.info("tmdb_enrich_progress", done=i + 1, total=len(titles))
 
                     time.sleep(_RATE_LIMIT_DELAY)
 
                 except Exception as e:
+                    session.rollback()
                     logger.warning("tmdb_enrich_error", title_id=title_id, title=title, error=str(e))
                     stats["failed"] += 1
 
-            session.commit()
             logger.info("tmdb_enrich_complete", **stats)
             return stats
 

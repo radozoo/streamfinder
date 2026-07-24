@@ -146,17 +146,19 @@ CREATE TABLE IF NOT EXISTS csfd_vod.dim_reviews (
 CREATE INDEX IF NOT EXISTS idx_review_title_id ON csfd_vod.dim_reviews(title_id);
 
 -- Dimension table: TMDB enrichment metadata
+-- title_id is the primary key: each title is enriched at most once. tmdb_id is
+-- NOT unique — one TMDB movie can legitimately back several ČSFD titles
+-- (e.g. a film and its festival/working-title entry).
 CREATE TABLE IF NOT EXISTS csfd_vod.dim_tmdb (
-    tmdb_id INTEGER PRIMARY KEY,
-    title_id INTEGER NOT NULL REFERENCES csfd_vod.fact_titles(title_id) ON DELETE CASCADE,
+    title_id INTEGER PRIMARY KEY REFERENCES csfd_vod.fact_titles(title_id) ON DELETE CASCADE,
+    tmdb_id INTEGER NOT NULL,
     poster_path VARCHAR(200),
     backdrop_path VARCHAR(200),
     trailer_youtube_id VARCHAR(50),
-    enriched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(title_id)
+    enriched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_tmdb_title_id ON csfd_vod.dim_tmdb(title_id);
+CREATE INDEX IF NOT EXISTS idx_tmdb_tmdb_id ON csfd_vod.dim_tmdb(tmdb_id);
 
 -- Failed records (dead letter queue)
 CREATE TABLE IF NOT EXISTS csfd_vod.failed_records (

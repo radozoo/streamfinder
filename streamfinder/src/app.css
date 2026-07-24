@@ -45,6 +45,8 @@ a {
 /* Poster cards */
 .poster-card {
 	position: relative;
+	display: flex;
+	flex-direction: column;
 	border-radius: var(--radius);
 	overflow: hidden;
 	background: var(--navy-700);
@@ -57,16 +59,29 @@ a {
 	box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
 }
 
-.poster-card img {
+/* The media container owns the 2:3 box; image and placeholder fill it
+   absolutely so every card is identical regardless of the source image's
+   intrinsic aspect ratio (TMDB posters vs. ČSFD thumbnails). */
+.poster-card .poster-media {
+	position: relative;
 	width: 100%;
 	aspect-ratio: 2/3;
+	overflow: hidden;
+	background: var(--navy-600);
+}
+
+.poster-card img {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
 	object-fit: cover;
 	display: block;
 }
 
 .poster-card .poster-placeholder {
-	width: 100%;
-	aspect-ratio: 2/3;
+	position: absolute;
+	inset: 0;
 	display: flex;
 	align-items: center;
 	justify-content: center;

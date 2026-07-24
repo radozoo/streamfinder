@@ -11,15 +11,16 @@ ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS age_rating VARCHAR(20)
 -- dim_vods: add direct watch URL per platform
 ALTER TABLE csfd_vod.dim_vods ADD COLUMN IF NOT EXISTS vod_url VARCHAR(500);
 
--- dim_tmdb: TMDB enrichment metadata per title
+-- dim_tmdb: TMDB enrichment metadata per title.
+-- title_id is the primary key (one enrichment per title); tmdb_id is NOT unique
+-- because one TMDB movie can back several ČSFD titles.
 CREATE TABLE IF NOT EXISTS csfd_vod.dim_tmdb (
-    tmdb_id INTEGER PRIMARY KEY,
-    title_id INTEGER NOT NULL REFERENCES csfd_vod.fact_titles(title_id) ON DELETE CASCADE,
+    title_id INTEGER PRIMARY KEY REFERENCES csfd_vod.fact_titles(title_id) ON DELETE CASCADE,
+    tmdb_id INTEGER NOT NULL,
     poster_path VARCHAR(200),
     backdrop_path VARCHAR(200),
     trailer_youtube_id VARCHAR(50),
-    enriched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(title_id)
+    enriched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_tmdb_title_id ON csfd_vod.dim_tmdb(title_id);
+CREATE INDEX IF NOT EXISTS idx_tmdb_tmdb_id ON csfd_vod.dim_tmdb(tmdb_id);

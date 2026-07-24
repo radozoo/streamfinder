@@ -68,11 +68,8 @@
 		width: 100%;
 	}
 
-	.poster-media {
-		position: relative;
-	}
-
-	/* Categorical badges live on the poster; descriptive text lives below it */
+	/* Categorical badges live on the poster; descriptive text lives below it
+	   (.poster-media box sizing is defined globally in app.css) */
 	.type-tag {
 		position: absolute;
 		top: 0.5rem;
