@@ -149,12 +149,16 @@ class PostgresLoader:
                     (url_id, title, year, link, date_added, run_id, updated_at,
                      title_en, plot, rating, image_url, title_type, parent_url,
                      vod_date, distributor, premiere_detail, scraped_at,
-                     runtime_min, votes_count, trailer_url, age_rating)
+                     runtime_min, votes_count, trailer_url, age_rating,
+                     csfd_id, root_id, season_no, episode_no,
+                     season_total, episode_total)
                 VALUES
                     (:url_id, :title, :year, :link, :date_added, :run_id, CURRENT_TIMESTAMP,
                      :title_en, :plot, :rating, :image_url, :title_type, :parent_url,
                      :vod_date, :distributor, :premiere_detail, :scraped_at,
-                     :runtime_min, :votes_count, :trailer_url, :age_rating)
+                     :runtime_min, :votes_count, :trailer_url, :age_rating,
+                     :csfd_id, :root_id, :season_no, :episode_no,
+                     :season_total, :episode_total)
                 ON CONFLICT (url_id)
                 DO UPDATE SET
                     title = EXCLUDED.title,
@@ -173,6 +177,12 @@ class PostgresLoader:
                     votes_count = EXCLUDED.votes_count,
                     trailer_url = EXCLUDED.trailer_url,
                     age_rating = EXCLUDED.age_rating,
+                    csfd_id = EXCLUDED.csfd_id,
+                    root_id = EXCLUDED.root_id,
+                    season_no = EXCLUDED.season_no,
+                    episode_no = EXCLUDED.episode_no,
+                    season_total = EXCLUDED.season_total,
+                    episode_total = EXCLUDED.episode_total,
                     updated_at = CURRENT_TIMESTAMP,
                     run_id = :run_id
                 RETURNING title_id
@@ -201,6 +211,12 @@ class PostgresLoader:
                     "votes_count": title.votes_count,
                     "trailer_url": title.trailer_url,
                     "age_rating": title.age_rating,
+                    "csfd_id": title.csfd_id,
+                    "root_id": title.root_id,
+                    "season_no": title.season_no,
+                    "episode_no": title.episode_no,
+                    "season_total": title.season_total,
+                    "episode_total": title.episode_total,
                 },
             )
 

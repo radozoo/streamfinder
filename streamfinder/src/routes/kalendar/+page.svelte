@@ -1,10 +1,13 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { untrack, tick } from 'svelte';
 	import type { PageData } from './$types';
-	import type { TitleIndex, TitleDetail } from '$lib/types';
+	import type { TitleIndex, TitleDetail, CrewEntry } from '$lib/types';
 	import PosterCard from '$lib/components/PosterCard.svelte';
 	import TitleModal from '$lib/components/TitleModal.svelte';
+	import FilterBar from '$lib/components/FilterBar.svelte';
+	import ActiveFilters from '$lib/components/ActiveFilters.svelte';
 	import { base } from '$app/paths';
+	import { loadCrewIndex, isCrewLoaded } from '$lib/data/crew';
 
 	let { data }: { data: PageData } = $props();
 
@@ -15,6 +18,16 @@
 
 	const CS_MONTHS = ['ledna','února','března','dubna','května','června','července','srpna','září','října','listopadu','prosince'];
 	const CS_DAYS = ['Neděle','Pondělí','Úterý','Středa','Čtvrtek','Pátek','Sobota'];
+
+	// Order of title types within a single day; anything else falls after these.
+	const TYPE_RANK: Record<string, number> = {
+		'seriál': 0,
+		'série': 1,
+		'film': 2,
+		'tv film': 3,
+		'epizoda': 4
+	};
+	const typeRank = (t: TitleIndex) => TYPE_RANK[t.title_type ?? ''] ?? 5;
 
 	function formatDateLabel(iso: string): { label: string; dayName: string } {
 		const d = new Date(iso + 'T12:00:00');
@@ -35,13 +48,44 @@
 		return dates.reverse(); // newest first
 	}
 
+	const YEAR_MIN = 1920;
+	const YEAR_MAX = 2026;
+
 	// ── Reactive state ────────────────────────────────────────────────────────
 	// untrack: seed once from URL params, then manage locally.
 	// Without untrack, SvelteKit navigation updating `data` would re-initialize state.
 	let daysBack = $state<number>(untrack(() => data.initialDays));
-	let selectedPlatform = $state(untrack(() => data.initialPlatform));
-	let selectedType = $state(untrack(() => data.initialType));
-	let selectedGenre = $state(untrack(() => data.initialGenre));
+	// Full filter set — identical to Katalog.
+	let searchQuery = $state(untrack(() => data.initialQuery ?? ''));
+	let selectedGenres = $state<string[]>(untrack(() => data.initialGenres ?? []));
+	let selectedPlatforms = $state<string[]>(untrack(() => data.initialPlatforms ?? []));
+	let selectedCountries = $state<string[]>(untrack(() => data.initialCountries ?? []));
+	let selectedTags = $state<string[]>(untrack(() => data.initialTags ?? []));
+	let selectedType = $state<string>(untrack(() => data.initialType ?? ''));
+	let selectedCrew = $state<string[]>(untrack(() => data.initialCrew ?? []));
+	let yearFrom = $state<number>(untrack(() => data.initialYearFrom ?? YEAR_MIN));
+	let yearTo = $state<number>(untrack(() => data.initialYearTo ?? YEAR_MAX));
+	let ratingMin = $state<number>(untrack(() => data.initialRatingMin ?? 0));
+	let filterPanelOpen = $state(false);
+
+	// ── Crew lazy loading (same as Katalog) ───────────────────────────────────
+	let crewItems = $state<CrewEntry[]>([]);
+	let crewLoading = $state(false);
+	let crewIdToName = $derived(
+		crewItems.length ? new Map(crewItems.map((c) => [c.id, c.name])) : null
+	);
+
+	async function ensureCrewLoaded() {
+		if (isCrewLoaded() || crewLoading) return;
+		crewLoading = true;
+		try {
+			crewItems = await loadCrewIndex();
+		} finally {
+			crewLoading = false;
+		}
+	}
+
+	if (untrack(() => data.initialCrew)?.length) ensureCrewLoaded();
 
 	let minDate = $derived.by(() => {
 		const d = new Date();
@@ -55,9 +99,16 @@
 	$effect(() => {
 		const params = new URLSearchParams();
 		if (daysBack !== DEFAULT_DAYS) params.set('days', String(daysBack));
-		if (selectedPlatform) params.set('platform', selectedPlatform);
-		if (selectedType)     params.set('type',     selectedType);
-		if (selectedGenre)    params.set('genre',    selectedGenre);
+		if (searchQuery.trim()) params.set('q', searchQuery.trim());
+		if (selectedGenres.length) params.set('genre', selectedGenres.join(','));
+		if (selectedPlatforms.length) params.set('platform', selectedPlatforms.join(','));
+		if (selectedCountries.length) params.set('country', selectedCountries.join(','));
+		if (selectedTags.length) params.set('tag', selectedTags.join(','));
+		if (selectedType) params.set('type', selectedType);
+		for (const name of selectedCrew) params.append('crew', name);
+		if (yearFrom > YEAR_MIN) params.set('yearFrom', String(yearFrom));
+		if (yearTo < YEAR_MAX) params.set('yearTo', String(yearTo));
+		if (ratingMin > 0) params.set('ratingMin', String(ratingMin));
 		const qs = params.toString();
 		history.replaceState(null, '', qs ? '?' + qs : location.pathname);
 	});
@@ -87,39 +138,142 @@
 		return map;
 	});
 
+	// Full filter predicate — identical facets to Katalog.
+	function passesFilters(t: TitleIndex): boolean {
+		const q = searchQuery.trim().toLowerCase();
+		if (q && !t.title.toLowerCase().includes(q) && !(t.title_en ?? '').toLowerCase().includes(q)) return false;
+		if (selectedGenres.length && !selectedGenres.some((g) => t.genres.includes(g))) return false;
+		if (selectedPlatforms.length && !selectedPlatforms.some((p) => t.platforms.includes(p))) return false;
+		if (selectedCountries.length && !selectedCountries.some((c) => t.countries.includes(c))) return false;
+		if (selectedTags.length && !selectedTags.some((tag) => t.tags.includes(tag))) return false;
+		if (selectedType && t.title_type !== selectedType) return false;
+		if (yearFrom > YEAR_MIN && (t.year ?? 0) < yearFrom) return false;
+		if (yearTo < YEAR_MAX && (t.year ?? 9999) > yearTo) return false;
+		if (ratingMin > 0 && (t.rating ?? 0) < ratingMin) return false;
+		if (selectedCrew.length && crewIdToName) {
+			const names = (t.crew_ids ?? []).map((id) => crewIdToName!.get(id)).filter(Boolean);
+			if (!selectedCrew.some((name) => names.includes(name))) return false;
+		}
+		return true;
+	}
+
+	// Filter + order within a day: group by type
+	// (seriál → série → film → tv film → epizoda → ostatní), most-rated first.
+	function applyFilters(list: TitleIndex[]): TitleIndex[] {
+		return list.filter(passesFilters).sort((a, b) => {
+			const r = typeRank(a) - typeRank(b);
+			if (r !== 0) return r;
+			return (b.votes_count ?? 0) - (a.votes_count ?? 0);
+		});
+	}
+
 	// Layer 2 — rebuilds when filters change (cheap O(days) lookup + filter)
 	let groups = $derived.by((): DayGroup[] => {
 		return allDates.map((date) => {
-			let titles = [...(titlesInRange.get(date) ?? [])];
-			if (selectedPlatform) titles = titles.filter((t) => t.platforms.includes(selectedPlatform));
-			if (selectedType)     titles = titles.filter((t) => t.title_type === selectedType);
-			if (selectedGenre)    titles = titles.filter((t) => t.genres.includes(selectedGenre));
-			titles.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
 			const { label, dayName } = formatDateLabel(date);
-			return { date, label, dayName, titles, isToday: date === TODAY };
+			return { date, label, dayName, titles: applyFilters(titlesInRange.get(date) ?? []), isToday: date === TODAY };
 		});
 	});
+
+	// ── Upcoming (future) releases — opt-in section above today ────────────────
+	let upcomingOpen = $state(false);
+	let upcomingGroups = $derived.by((): DayGroup[] => {
+		const map = new Map<string, TitleIndex[]>();
+		for (const t of data.titles) {
+			if (!t.vod_date || t.vod_date <= TODAY) continue;
+			const arr = map.get(t.vod_date) ?? [];
+			arr.push(t);
+			map.set(t.vod_date, arr);
+		}
+		return [...map.keys()]
+			.sort((a, b) => b.localeCompare(a)) // descending — latest at top, tomorrow nearest today
+			.map((date) => {
+				const { label, dayName } = formatDateLabel(date);
+				return { date, label, dayName, titles: applyFilters(map.get(date) ?? []), isToday: false };
+			})
+			.filter((g) => g.titles.length > 0);
+	});
+	let upcomingCount = $derived(upcomingGroups.reduce((s, g) => s + g.titles.length, 0));
+
+	// Reveal tomorrow on expand; further-out days are above it (scroll up).
+	async function toggleUpcoming() {
+		upcomingOpen = !upcomingOpen;
+		if (!upcomingOpen) return;
+		await tick();
+		const soonest = upcomingGroups.at(-1)?.date; // descending → last group is nearest today
+		if (soonest) {
+			document.getElementById('day-' + soonest)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+		}
+	}
 
 	// ── Stats ─────────────────────────────────────────────────────────────────
 	let totalTitles = $derived(groups.reduce((s, g) => s + g.titles.length, 0));
 	let daysWithTitles = $derived(groups.filter((g) => g.titles.length > 0).length);
 
-	// ── Dimension options ─────────────────────────────────────────────────────
-	let topPlatforms = $derived(data.dimensions.platforms.slice(0, 10));
-	let topGenres = $derived(data.dimensions.genres.slice(0, 14));
+	// ── Filter dimensions + helpers (identical to Katalog) ────────────────────
+	// Flat filtered set (calendar titles) drives the pill availability indicators.
+	let filteredTitles = $derived(data.titles.filter((t) => t.vod_date && passesFilters(t)));
 
-	// Single-pass scan with early exit — stops as soon as all 4 types are found
-	let typeOptions = $derived.by(() => {
-		const seen = new Set<string>();
-		const candidates = new Set(['film', 'seriál', 'tv film', 'pořad']);
-		for (const t of data.titles) {
-			if (t.title_type && candidates.has(t.title_type) && t.vod_date != null && t.vod_date >= minDate) {
-				seen.add(t.title_type);
-				if (seen.size === candidates.size) break;
-			}
-		}
-		return ['film', 'seriál', 'tv film', 'pořad'].filter((t) => seen.has(t));
+	let availableGenres = $derived(
+		data.dimensions.genres.map((g) => ({ ...g, hit: filteredTitles.some((t) => t.genres.includes(g.name)) }))
+	);
+	let availablePlatforms = $derived(
+		data.dimensions.platforms.map((p) => ({ ...p, hit: filteredTitles.some((t) => t.platforms.includes(p.name)) }))
+	);
+	let availableCountries = $derived(
+		data.dimensions.countries.slice(0, 30).map((c) => ({ ...c, hit: filteredTitles.some((t) => t.countries.includes(c.name)) }))
+	);
+	let availableTags = $derived(
+		data.dimensions.tags.slice(0, 50).map((tag) => ({ ...tag, hit: filteredTitles.some((t) => t.tags.includes(tag.name)) }))
+	);
+
+	let typeOptions = $derived(
+		['film', 'seriál', 'tv film', 'pořad', 'krátký film'].filter((type) =>
+			data.titles.some((t) => t.title_type === type)
+		)
+	);
+
+	function toggle(arr: string[], name: string): string[] {
+		return arr.includes(name) ? arr.filter((v) => v !== name) : [...arr, name];
+	}
+
+	function clearAll() {
+		searchQuery = '';
+		selectedGenres = [];
+		selectedPlatforms = [];
+		selectedCountries = [];
+		selectedTags = [];
+		selectedType = '';
+		selectedCrew = [];
+		yearFrom = YEAR_MIN;
+		yearTo = YEAR_MAX;
+		ratingMin = 0;
+		filterPanelOpen = false;
+	}
+
+	let activeFilterList = $derived.by(() => {
+		const chips: { category: string; value: string }[] = [];
+		for (const g of selectedGenres) chips.push({ category: 'Žánr', value: g });
+		for (const p of selectedPlatforms) chips.push({ category: 'Platforma', value: p });
+		for (const c of selectedCountries) chips.push({ category: 'Krajina', value: c });
+		for (const t of selectedTags) chips.push({ category: 'Tag', value: t });
+		if (selectedType) chips.push({ category: 'Typ', value: selectedType });
+		for (const c of selectedCrew) chips.push({ category: 'Tvůrce', value: c });
+		if (yearFrom > YEAR_MIN || yearTo < YEAR_MAX) chips.push({ category: 'Rok', value: `${yearFrom}–${yearTo}` });
+		if (ratingMin > 0) chips.push({ category: 'Hodnocení', value: `${ratingMin}%+` });
+		return chips;
 	});
+
+	function removeFilter(category: string, value: string) {
+		if (category === 'Žánr') selectedGenres = selectedGenres.filter((g) => g !== value);
+		else if (category === 'Platforma') selectedPlatforms = selectedPlatforms.filter((p) => p !== value);
+		else if (category === 'Krajina') selectedCountries = selectedCountries.filter((c) => c !== value);
+		else if (category === 'Tag') selectedTags = selectedTags.filter((t) => t !== value);
+		else if (category === 'Typ') selectedType = '';
+		else if (category === 'Tvůrce') selectedCrew = selectedCrew.filter((c) => c !== value);
+		else if (category === 'Rok') { yearFrom = YEAR_MIN; yearTo = YEAR_MAX; }
+		else if (category === 'Hodnocení') ratingMin = 0;
+	}
 
 	// ── Quick time links ──────────────────────────────────────────────────────
 	function getWeekStart(weeksBack = 0): string {
@@ -180,6 +334,13 @@
 		modalTitle = null;
 		modalLoading = false;
 	}
+
+	// Resolve the serial a release belongs to (for card context + modal jump).
+	let byId = $derived(new Map(data.titles.map((t) => [t.id, t])));
+	function openById(id: number) {
+		const e = byId.get(id);
+		if (e) openModal(e);
+	}
 </script>
 
 <div class="page-container">
@@ -201,80 +362,66 @@
 		<button class="quick-link" onclick={() => scrollToDate(getMonthStart())}>Tento měsíc</button>
 	</div>
 
-	<!-- Filters -->
-	<div class="filter-bar">
-		<!-- Platform -->
-		<div class="filter-section">
-			<span class="filter-label">Platforma</span>
-			<div class="pill-row">
-				<button
-					class="pill"
-					class:active={selectedPlatform === ''}
-					onclick={() => (selectedPlatform = '')}
-				>Vše</button>
-				{#each topPlatforms as p}
-					<button
-						class="pill"
-						class:active={selectedPlatform === p.name}
-						onclick={() => (selectedPlatform = selectedPlatform === p.name ? '' : p.name)}
-					>{p.name}</button>
-				{/each}
-			</div>
-		</div>
-
-		<!-- Type -->
-		{#if typeOptions.length > 0}
-			<div class="filter-section">
-				<span class="filter-label">Typ</span>
-				<div class="pill-row">
-					<button
-						class="pill"
-						class:active={selectedType === ''}
-						onclick={() => (selectedType = '')}
-					>Vše</button>
-					{#each typeOptions as type}
-						<button
-							class="pill"
-							class:active={selectedType === type}
-							onclick={() => (selectedType = selectedType === type ? '' : type)}
-						>{type}</button>
-					{/each}
-				</div>
-			</div>
-		{/if}
-
-		<!-- Genre -->
-		<div class="filter-section">
-			<span class="filter-label">Žánr</span>
-			<div class="pill-row">
-				<button
-					class="pill"
-					class:active={selectedGenre === ''}
-					onclick={() => (selectedGenre = '')}
-				>Vše</button>
-				{#each topGenres as g}
-					<button
-						class="pill"
-						class:active={selectedGenre === g.name}
-						onclick={() => (selectedGenre = selectedGenre === g.name ? '' : g.name)}
-					>{g.name}</button>
-				{/each}
-			</div>
-		</div>
+	<!-- Search + filters — identical to Katalog -->
+	<div class="search-bar">
+		<input
+			class="search-input"
+			type="search"
+			placeholder="Hledat film, seriál…"
+			bind:value={searchQuery}
+		/>
 	</div>
+
+	<div class="filter-bar-row">
+		<FilterBar
+			genres={availableGenres}
+			platforms={availablePlatforms}
+			countries={availableCountries}
+			tags={availableTags}
+			{typeOptions}
+			{crewItems}
+			{crewLoading}
+			onCrewHover={ensureCrewLoaded}
+			{selectedGenres}
+			{selectedPlatforms}
+			{selectedCountries}
+			{selectedTags}
+			{selectedType}
+			{selectedCrew}
+			{yearFrom}
+			{yearTo}
+			{ratingMin}
+			yearMin={YEAR_MIN}
+			yearMax={YEAR_MAX}
+			onToggleGenre={(name) => (selectedGenres = toggle(selectedGenres, name))}
+			onTogglePlatform={(name) => (selectedPlatforms = toggle(selectedPlatforms, name))}
+			onToggleCountry={(name) => (selectedCountries = toggle(selectedCountries, name))}
+			onToggleTag={(name) => (selectedTags = toggle(selectedTags, name))}
+			onToggleType={(name) => (selectedType = selectedType === name ? '' : name)}
+			onSelectCrew={(name) => (selectedCrew = [...selectedCrew, name])}
+			onRemoveCrew={(name) => (selectedCrew = selectedCrew.filter((c) => c !== name))}
+			onYearChange={(from, to) => { yearFrom = from; yearTo = to; }}
+			onRatingChange={(from) => { ratingMin = from; }}
+		/>
+	</div>
+
+	<ActiveFilters filters={activeFilterList} onRemove={removeFilter} onClearAll={clearAll} />
 
 	<!-- Timeline -->
 	<div class="timeline">
-		{#each groups as group (group.date)}
+		{#snippet dayBlock(group: DayGroup, upcoming: boolean)}
 			<div
 				id="day-{group.date}"
 				class="day-block"
 				class:is-today={group.isToday}
+				class:is-upcoming={upcoming}
 				class:is-empty={group.titles.length === 0}
 			>
 				<div class="day-header">
 					{#if group.isToday}
 						<span class="today-badge">DNES</span>
+					{:else if upcoming}
+						<span class="soon-badge">BRZY</span>
 					{/if}
 					<span class="day-name">{group.dayName}</span>
 					<span class="day-label">{group.label}</span>
@@ -289,13 +436,47 @@
 				{#if group.titles.length > 0}
 					<div class="filmstrip scroll-row">
 						{#each group.titles as title (title.id)}
-							<PosterCard {title} onclick={openModal} />
+							<PosterCard
+								{title}
+								serialTitle={title.root_title_id != null
+									? byId.get(title.root_title_id)?.title
+									: undefined}
+								onclick={openModal}
+							/>
 						{/each}
 					</div>
 				{:else}
 					<div class="day-empty">—</div>
 				{/if}
 			</div>
+		{/snippet}
+
+		<!-- Upcoming releases — collapsed by default, past stays primary -->
+		{#if upcomingCount > 0}
+			<button
+				class="upcoming-toggle"
+				class:open={upcomingOpen}
+				onclick={toggleUpcoming}
+				aria-expanded={upcomingOpen}
+			>
+				<span class="chev">{upcomingOpen ? '▾' : '▸'}</span>
+				<span class="upcoming-name">Připravované</span>
+				<span class="upcoming-count">{upcomingCount}</span>
+				<span class="upcoming-hint">
+					{upcomingOpen
+						? 'skrýt'
+						: `příštích ${upcomingGroups.length} ${upcomingGroups.length === 1 ? 'den' : upcomingGroups.length < 5 ? 'dny' : 'dní'}`}
+				</span>
+			</button>
+			{#if upcomingOpen}
+				{#each upcomingGroups as group (group.date)}
+					{@render dayBlock(group, true)}
+				{/each}
+			{/if}
+		{/if}
+
+		{#each groups as group (group.date)}
+			{@render dayBlock(group, false)}
 		{/each}
 
 		{#if daysBack < MAX_DAYS}
@@ -308,7 +489,7 @@
 	</div>
 </div>
 
-<TitleModal title={modalTitle} loading={modalLoading} onclose={closeModal} />
+<TitleModal title={modalTitle} loading={modalLoading} onclose={closeModal} onopentitle={openById} />
 
 <style>
 	.kal-header {
@@ -346,39 +527,30 @@
 		color: var(--amber);
 	}
 
-	/* Filter bar */
-	.filter-bar {
+	/* Search + filter bar (same as Katalog) */
+	.search-bar {
 		display: flex;
-		flex-direction: column;
 		gap: 0.75rem;
-		margin-bottom: 2rem;
-		padding: 1rem 1.25rem;
-		background: var(--navy-800);
+		margin-bottom: 1rem;
+	}
+
+	.search-input {
+		flex: 1;
+		background: var(--navy-700);
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
+		padding: 0.6rem 1rem;
+		color: var(--text-primary);
+		font-size: 0.95rem;
+		outline: none;
 	}
 
-	.filter-section {
-		display: flex;
-		align-items: flex-start;
-		gap: 0.75rem;
+	.search-input:focus {
+		border-color: var(--amber);
 	}
 
-	.filter-label {
-		font-size: 0.68rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-		white-space: nowrap;
-		padding-top: 5px;
-		min-width: 60px;
-	}
-
-	.pill-row {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.35rem;
+	.filter-bar-row {
+		margin-bottom: 1rem;
 	}
 
 	/* Timeline */
@@ -420,6 +592,68 @@
 		border-radius: 999px;
 		background: var(--amber);
 		color: var(--navy-900);
+	}
+
+	/* Upcoming (future) releases — cool accent to set them apart from the past */
+	.upcoming-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		width: 100%;
+		padding: 0.7rem 0.9rem;
+		margin-bottom: 0.25rem;
+		background: var(--navy-800);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		color: var(--text-secondary);
+		font-size: 0.9rem;
+		cursor: pointer;
+		transition: border-color 0.15s, color 0.15s;
+	}
+
+	.upcoming-toggle:hover,
+	.upcoming-toggle.open {
+		border-color: rgba(110, 168, 255, 0.5);
+		color: var(--text-primary);
+	}
+
+	.upcoming-toggle .chev {
+		width: 1rem;
+		color: #6ea8ff;
+		font-size: 0.8rem;
+	}
+
+	.upcoming-name {
+		font-weight: 600;
+	}
+
+	.upcoming-count {
+		font-size: 0.72rem;
+		font-weight: 700;
+		padding: 1px 8px;
+		border-radius: 999px;
+		background: rgba(110, 168, 255, 0.16);
+		color: #6ea8ff;
+	}
+
+	.upcoming-hint {
+		margin-left: auto;
+		font-size: 0.78rem;
+		color: var(--text-muted);
+	}
+
+	.soon-badge {
+		font-size: 0.62rem;
+		font-weight: 800;
+		letter-spacing: 0.1em;
+		padding: 2px 7px;
+		border-radius: 999px;
+		background: rgba(110, 168, 255, 0.16);
+		color: #6ea8ff;
+	}
+
+	.day-block.is-upcoming {
+		border-top-color: rgba(110, 168, 255, 0.35);
 	}
 
 	.day-name {
@@ -483,15 +717,6 @@
 	@media (max-width: 640px) {
 		.filmstrip :global(.poster-card) {
 			flex: 0 0 120px;
-		}
-
-		.filter-section {
-			flex-direction: column;
-			gap: 0.4rem;
-		}
-
-		.filter-label {
-			padding-top: 0;
 		}
 	}
 </style>

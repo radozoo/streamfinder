@@ -39,8 +39,21 @@ ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS votes_count INTEGER;
 ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS trailer_url VARCHAR(500);
 ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS age_rating VARCHAR(20);
 
+-- Title hierarchy — Work vs. Release model (2026-07-24, migration 004).
+-- root_id/csfd_id are derived from the URL, is_toplevel means root_id equals csfd_id.
+-- Supersedes the never-populated parent_url column.
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS csfd_id INTEGER;   -- own ČSFD id
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS root_id INTEGER;   -- top-level serial id
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS season_no INTEGER;
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS episode_no INTEGER;
+
+-- Serial totals from the serial page header "Série (N) Epizody (M)" (migration 005).
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS season_total INTEGER;
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS episode_total INTEGER;
+
 CREATE INDEX IF NOT EXISTS idx_title_type ON csfd_vod.fact_titles(title_type);
 CREATE INDEX IF NOT EXISTS idx_rating ON csfd_vod.fact_titles(rating);
+CREATE INDEX IF NOT EXISTS idx_root_id ON csfd_vod.fact_titles(root_id);
 
 -- Dimension table: Genres (one row per title-genre combination)
 CREATE TABLE IF NOT EXISTS csfd_vod.dim_genres (

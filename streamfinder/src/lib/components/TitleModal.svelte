@@ -1,13 +1,15 @@
 <script lang="ts">
-	import type { TitleDetail } from '$lib/types';
+	import type { TitleDetail, EpisodeRelease } from '$lib/types';
 
 	interface Props {
 		title: TitleDetail | null;
 		loading: boolean;
 		onclose: () => void;
+		/** Open another title by its id (used by the "jump to serial" link). */
+		onopentitle?: (id: number) => void;
 	}
 
-	let { title, loading, onclose }: Props = $props();
+	let { title, loading, onclose, onopentitle }: Props = $props();
 
 	const ACTOR_LIMIT = 20;
 	let actorsExpanded = $state(false);
@@ -17,6 +19,74 @@
 		title?.id;
 		actorsExpanded = false;
 	});
+
+	// Czech plural: 1 → one, 2–4 → few, 5+ → many
+	function czPlural(n: number, one: string, few: string, many: string): string {
+		if (n === 1) return one;
+		if (n >= 2 && n <= 4) return few;
+		return many;
+	}
+
+	// Serial shape line: "2 série · 18 epizod"
+	let shapeText = $derived.by(() => {
+		if (!title) return null;
+		const parts: string[] = [];
+		if (title.season_count && title.season_count > 1) {
+			parts.push(`${title.season_count} ${czPlural(title.season_count, 'série', 'série', 'sérií')}`);
+		}
+		if (title.episode_count) {
+			const w: [string, string, string] =
+				title.title_type === 'pořad' ? ['díl', 'díly', 'dílů'] : ['epizoda', 'epizody', 'epizod'];
+			parts.push(`${title.episode_count} ${czPlural(title.episode_count, w[0], w[1], w[2])}`);
+		}
+		return parts.join(' · ') || null;
+	});
+
+	// ── Release timeline (top-level serials) ──────────────────────────────────
+	interface SeasonGroup {
+		season: number | null;
+		eps: EpisodeRelease[];
+		first: string | null;
+		last: string | null;
+	}
+
+	let seasons = $derived.by((): SeasonGroup[] => {
+		const eps = title?.episodes;
+		if (!eps || !eps.length) return [];
+		const map = new Map<number, EpisodeRelease[]>();
+		for (const e of eps) {
+			const s = e.season_no ?? 0;
+			if (!map.has(s)) map.set(s, []);
+			map.get(s)!.push(e);
+		}
+		return [...map.entries()]
+			.sort((a, b) => a[0] - b[0])
+			.map(([season, list]) => {
+				const dates = list.map((e) => e.vod_date).filter((d): d is string => !!d).sort();
+				return { season: season || null, eps: list, first: dates[0] ?? null, last: dates.at(-1) ?? null };
+			});
+	});
+
+	function dotPos(e: EpisodeRelease, first: string | null, last: string | null): number {
+		if (!e.vod_date || !first || !last || first === last) return 50;
+		const t0 = +new Date(first), t1 = +new Date(last), t = +new Date(e.vod_date);
+		return Math.max(0, Math.min(100, ((t - t0) / (t1 - t0)) * 100));
+	}
+
+	function shortDate(d: string | null): string {
+		if (!d) return '';
+		const [, mo, day] = d.split('-');
+		return `${Number(day)}. ${Number(mo)}.`;
+	}
+
+	function cadenceLabel(days: number | null | undefined): string | null {
+		if (days == null) return null;
+		if (days <= 0) return 'celá séria naraz';
+		if (days === 1) return 'denně';
+		if (days <= 4) return `ob ${days} dny`;
+		if (days <= 10) return 'týdně';
+		return `ob ~${days} dní`;
+	}
 
 	function ratingColor(r: number | null) {
 		if (!r) return 'var(--text-muted)';
@@ -95,6 +165,24 @@
 								{/if}
 							</div>
 
+							{#if shapeText}
+								<div class="modal-shape">
+									<span class="shape-text">{shapeText}</span>
+									{#if title.is_running}<span class="shape-live">● běží</span>{/if}
+								</div>
+							{/if}
+
+							{#if title.is_toplevel === false && title.root_title_id != null && onopentitle}
+								<button
+									class="jump-serial"
+									type="button"
+									onclick={() => onopentitle?.(title!.root_title_id!)}
+								>
+									<span class="jump-label">Součást seriálu</span>
+									<span class="jump-cta">Zobrazit seriál →</span>
+								</button>
+							{/if}
+
 							{#if title.genres.length || title.countries.length}
 								<div class="modal-genres">
 									{#each title.genres as g}
@@ -129,6 +217,38 @@
 							{/if}
 						</div>
 					</div>
+
+					{#if seasons.length}
+						<div class="modal-section">
+							<div class="tl-head">
+								<h3 class="filter-label">Časová osa dostupnosti</h3>
+								{#if cadenceLabel(title.cadence_days)}
+									<span class="tl-cad">{cadenceLabel(title.cadence_days)}</span>
+								{/if}
+							</div>
+							{#each seasons as s}
+								<div class="tl-season">
+									<div class="tl-slabel">
+										<span class="tl-sname">{s.season ? `SÉRIE ${s.season}` : 'EPIZODY'}</span>
+										<span class="tl-dates">
+											{shortDate(s.first)}–{shortDate(s.last)} ·
+											{s.eps.length} {s.eps.length === 1 ? 'epizoda' : s.eps.length < 5 ? 'epizody' : 'epizod'}
+										</span>
+									</div>
+									<div class="tl-track">
+										<div class="tl-line"></div>
+										{#each s.eps as e}
+											<span
+												class="tl-dot"
+												style="left: {dotPos(e, s.first, s.last)}%"
+												title={`${e.title} · ${shortDate(e.vod_date)}`}
+											></span>
+										{/each}
+									</div>
+								</div>
+							{/each}
+						</div>
+					{/if}
 
 					{#if title.directors.length || title.screenwriters.length || title.cinematographers.length || title.composers.length || title.actors.length}
 						<div class="modal-section">
@@ -493,5 +613,129 @@
 		text-transform: uppercase;
 		color: var(--text-muted);
 		margin-bottom: 0.5rem;
+	}
+
+	/* Serial shape line */
+	.modal-shape {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin-bottom: 0.75rem;
+	}
+
+	.shape-text {
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: var(--amber);
+	}
+
+	.shape-live {
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		padding: 2px 8px;
+		border-radius: 999px;
+		background: rgba(74, 222, 128, 0.16);
+		color: #4ade80;
+		border: 1px solid rgba(74, 222, 128, 0.35);
+	}
+
+	/* Jump-to-serial banner (release → work) */
+	.jump-serial {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		width: 100%;
+		margin: 0.25rem 0 0.75rem;
+		padding: 0.6rem 0.9rem;
+		background: rgba(245, 166, 35, 0.08);
+		border: 1px solid rgba(245, 166, 35, 0.25);
+		border-radius: var(--radius-sm);
+		cursor: pointer;
+		text-align: left;
+		transition: background 0.15s;
+	}
+
+	.jump-serial:hover {
+		background: rgba(245, 166, 35, 0.14);
+	}
+
+	.jump-label {
+		font-size: 0.8rem;
+		color: var(--text-secondary);
+	}
+
+	.jump-cta {
+		font-size: 0.85rem;
+		font-weight: 700;
+		color: var(--amber);
+		white-space: nowrap;
+	}
+
+	/* Release timeline */
+	.tl-head {
+		display: flex;
+		align-items: baseline;
+		gap: 0.6rem;
+		margin-bottom: 1rem;
+	}
+
+	.tl-cad {
+		margin-left: auto;
+		font-size: 0.75rem;
+		color: #4ade80;
+	}
+
+	.tl-season {
+		margin-bottom: 1.1rem;
+	}
+
+	.tl-slabel {
+		display: flex;
+		align-items: baseline;
+		gap: 0.6rem;
+		margin-bottom: 0.6rem;
+		flex-wrap: wrap;
+	}
+
+	.tl-sname {
+		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+		font-size: 0.75rem;
+		color: var(--amber);
+		font-weight: 700;
+	}
+
+	.tl-dates {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+	}
+
+	.tl-track {
+		position: relative;
+		height: 22px;
+	}
+
+	.tl-line {
+		position: absolute;
+		top: 10px;
+		left: 0;
+		right: 0;
+		height: 2px;
+		background: var(--navy-500);
+		border-radius: 2px;
+	}
+
+	.tl-dot {
+		position: absolute;
+		top: 5px;
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		background: var(--amber);
+		transform: translateX(-50%);
+		border: 2px solid var(--navy-800);
+		cursor: help;
 	}
 </style>

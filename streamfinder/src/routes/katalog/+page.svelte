@@ -72,6 +72,8 @@
 		const q = searchQuery.trim().toLowerCase();
 		return data.titles
 			.filter((t) => {
+				// Katalóg shows works only — episodes/seasons roll up under their serial.
+				if (t.is_toplevel === false) return false;
 				if (
 					q &&
 					!t.title.toLowerCase().includes(q) &&
@@ -264,6 +266,13 @@
 	function closeModal() {
 		modalTitle = null;
 		modalLoading = false;
+	}
+
+	// Open the top-level work behind a release (modal "jump to serial").
+	let byId = $derived(new Map(data.titles.map((t) => [t.id, t])));
+	function openById(id: number) {
+		const e = byId.get(id);
+		if (e) openModal(e);
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -485,7 +494,7 @@
 	</div>
 {/if}
 
-<TitleModal title={modalTitle} loading={modalLoading} onclose={closeModal} />
+<TitleModal title={modalTitle} loading={modalLoading} onclose={closeModal} onopentitle={openById} />
 
 <style>
 	.katalog-header {

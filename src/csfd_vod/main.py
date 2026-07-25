@@ -194,6 +194,14 @@ def cmd_parse(args) -> dict:
                             t.distributor = entry["distributor"]
                         if not t.title_type and entry.get("list_type"):
                             t.title_type = entry["list_type"]
+                        # Merge the platform from the /vod listing (union) — the
+                        # authoritative source for serials/episodes with no detail VOD box.
+                        if entry.get("platforms"):
+                            existing = [p.strip() for p in (t.vod_platforms or "").split(",") if p.strip()]
+                            for p in entry["platforms"]:
+                                if p not in existing:
+                                    existing.append(p)
+                            t.vod_platforms = ", ".join(existing)
                         matched += 1
             except Exception as e:
                 logger.warning("list_page_parse_error", path=str(list_page), error=str(e))

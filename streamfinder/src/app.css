@@ -49,7 +49,11 @@ a {
 	flex-direction: column;
 	border-radius: var(--radius);
 	overflow: hidden;
+	/* Subtle panel surface: a fill a step above the page, a hairline edge so the
+	   surface actually reads on a dark UI, and a whisper of shadow for lift. */
 	background: var(--navy-700);
+	border: 1px solid var(--border);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 	cursor: pointer;
 	transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
@@ -68,6 +72,19 @@ a {
 	aspect-ratio: 2/3;
 	overflow: hidden;
 	background: var(--navy-600);
+}
+
+/* Bottom scrim so the platform badge stays legible over bright posters */
+.poster-card .poster-media::after {
+	content: '';
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 45%;
+	background: linear-gradient(to top, rgba(8, 14, 30, 0.7), transparent);
+	pointer-events: none;
+	z-index: 1;
 }
 
 .poster-card img {
@@ -105,6 +122,9 @@ a {
 	-webkit-line-clamp: 2;
 	-webkit-box-orient: vertical;
 	overflow: hidden;
+	/* Reserve two lines so the genre + rating rows align across cards
+	   regardless of whether a title wraps to one line or two. */
+	min-height: 2.6em;
 }
 
 .poster-card .card-meta {

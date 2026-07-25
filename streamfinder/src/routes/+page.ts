@@ -11,25 +11,39 @@ export const load: PageLoad = async ({ parent }) => {
 	};
 
 	const thisMonthStart = today.toISOString().slice(0, 7) + '-01';
+	const todayStr = today.toISOString().slice(0, 10);
 
-	// Featured title: highest-rated film from past 21 days, rating>=75, votes>=500
-	const recentCutoff21 = daysAgo(21);
-	const recentCutoff45 = daysAgo(45);
+	// Featured title: the best recent work. Very fresh releases have few votes yet, so
+	// relax the bar progressively (window / rating / votes) — there is always a pick.
+	const isFeaturable = (t: (typeof titles)[number]) =>
+		t.title_type === 'film' || (t.is_toplevel && (t.title_type === 'seriál' || t.title_type === 'tv film'));
 
-	const findFeatured = (cutoff: string) =>
+	const featuredTiers: [number, number, number][] = [
+		[21, 75, 100],
+		[45, 72, 50],
+		[60, 70, 20],
+		[90, 68, 5],
+		[120, 0, 0], // last resort: highest-rated recent work, whatever the votes
+	];
+
+	const findFeatured = (days: number, minRating: number, minVotes: number) =>
 		titles
 			.filter(
 				(t) =>
 					t.vod_date &&
-					t.vod_date >= cutoff &&
-					t.vod_date <= today.toISOString().slice(0, 10) &&
-					(t.rating ?? 0) >= 75 &&
-					(t.votes_count ?? 0) >= 100 &&
-					t.title_type === 'film'
+					t.vod_date >= daysAgo(days) &&
+					t.vod_date <= todayStr &&
+					isFeaturable(t) &&
+					(t.rating ?? 0) >= minRating &&
+					(t.votes_count ?? 0) >= minVotes
 			)
 			.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))[0] ?? null;
 
-	const featured = findFeatured(recentCutoff21) ?? findFeatured(recentCutoff45) ?? null;
+	let featured = null;
+	for (const [days, r, v] of featuredTiers) {
+		featured = findFeatured(days, r, v);
+		if (featured) break;
+	}
 
 	// New this week (past 7 days)
 	const weekCutoff = daysAgo(7);

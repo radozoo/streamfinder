@@ -32,6 +32,86 @@ def _slug(title: str, year: int | None) -> str:
     return slug
 
 
+def _poster_url(t: dict, tmdb_map: dict) -> str | None:
+    """TMDB poster if enriched, else the ČSFD image."""
+    tmdb = tmdb_map.get(t["title_id"], {})
+    if tmdb.get("poster_path"):
+        return f"{_TMDB_IMG_BASE}/w500{tmdb['poster_path']}"
+    return t["image_url"]
+
+
+def _root_posters(titles: list[dict], tmdb_map: dict) -> dict[int, str]:
+    """Map root_id → the top-level work's poster, so posterless episodes/seasons
+    can inherit their serial's artwork."""
+    return {
+        t["root_id"]: _poster_url(t, tmdb_map)
+        for t in titles
+        if t["root_id"] is not None and t["root_id"] == t["csfd_id"]
+    }
+
+
+# Show the primary streaming service first; Czech IPTV re-streamers
+# (SledovaniTV, Lepší.TV, Telly) rank last so they never mask HBO Max/Netflix/etc.
+_PLATFORM_PRIORITY = {
+    name: i
+    for i, name in enumerate([
+        "Netflix", "HBO Max", "Max", "Disney+", "Apple TV+", "Apple TV",
+        "Prime Video", "Prime", "Paramount+", "SkyShowtime", "Crunchyroll",
+        "Canal+", "Hulu", "Peacock", "Showtime", "AMC+", "MGM+", "Discovery+",
+        "BBC iPlayer", "ITVX", "Acorn TV", "Movistar+", "Viaplay", "WOW Presents Plus",
+        "prima+", "Voyo", "YouTube", "YouTube Movies", "YouTube Premium",
+        "Oneplay", "iVysílání", "Stream.cz", "Televize Seznam", "MALL.TV", "JOJ Play",
+        "Rakuten.tv", "DAFilms", "KVIFF.TV", "Telly", "SledovaniTV", "Lepší.TV",
+    ])
+}
+
+
+def _sort_platforms(names: list[str]) -> list[str]:
+    """De-dup and order platforms so the primary service leads."""
+    seen: list[str] = []
+    for n in names:
+        if n not in seen:
+            seen.append(n)
+    return sorted(seen, key=lambda n: _PLATFORM_PRIORITY.get(n, 900))
+
+
+def _root_platforms(titles: list[dict], vods_map: dict) -> dict[int, list[str]]:
+    """Map root_id → the top-level work's platforms, so episodes with no platform of
+    their own inherit their serial's (they drop on the same service)."""
+    out: dict[int, list[str]] = {}
+    for t in titles:
+        if t["root_id"] is not None and t["root_id"] == t["csfd_id"]:
+            plats = [v["platform"] for v in vods_map.get(t["title_id"], [])]
+            if plats:
+                out[t["root_id"]] = plats
+    return out
+
+
+def _root_vods(titles: list[dict], vods_map: dict) -> dict[int, list[dict]]:
+    """Map root_id → the top-level work's [{platform, url}] list (for episode modals)."""
+    out: dict[int, list[dict]] = {}
+    for t in titles:
+        if t["root_id"] is not None and t["root_id"] == t["csfd_id"]:
+            v = vods_map.get(t["title_id"])
+            if v:
+                out[t["root_id"]] = v
+    return out
+
+
+def _child_platforms(titles: list[dict], vods_map: dict) -> dict[int, list[str]]:
+    """Map root_id → union of its children's platforms, so a serial with no platform
+    of its own (never listed on /vod as a whole) still shows where its episodes air."""
+    out: dict[int, list[str]] = {}
+    for t in titles:
+        rid = t["root_id"]
+        if rid is not None and rid != t["csfd_id"]:  # a child (episode/season)
+            for v in vods_map.get(t["title_id"], []):
+                bucket = out.setdefault(rid, [])
+                if v["platform"] not in bucket:
+                    bucket.append(v["platform"])
+    return out
+
+
 class StreamfinderExporter:
     """Export Streamfinder JSON data files from PostgreSQL."""
 
@@ -69,6 +149,10 @@ class StreamfinderExporter:
 
             titles = self._load_titles(session)
 
+            # Work↔Release hierarchy + per-serial aggregates (season/episode counts,
+            # cadence, release timeline) derived from root_id/csfd_id.
+            root_title_id, serial_agg, episodes_map = self._build_hierarchy(titles, vods_map)
+
             # Build crew lookup and per-title crew ID mapping
             crew_list, title_crew_map = self._load_crew(
                 directors_map, actors_map, screenwriters_map, cinematographers_map, composers_map,
@@ -78,13 +162,17 @@ class StreamfinderExporter:
             _write(out / "crew_index.json", crew_list)
 
             # titles_index.json — lightweight, used for grid/calendar (now includes crew_ids)
-            index = self._build_index(titles, genres_map, tags_map, countries_map, vods_map, tmdb_map, title_crew_map)
+            index = self._build_index(
+                titles, genres_map, tags_map, countries_map, vods_map, tmdb_map,
+                title_crew_map, root_title_id, serial_agg,
+            )
             _write(out / "titles_index.json", index)
 
             # titles_detail.json — full per-title dict, keyed by '{title_id}-{slug}'
             detail = self._build_detail(
                 titles, genres_map, tags_map, countries_map, directors_map, actors_map,
                 screenwriters_map, cinematographers_map, composers_map, reviews_map, vods_map, tmdb_map,
+                episodes_map, serial_agg, root_title_id,
             )
             _write(out / "titles_detail.json", detail)
 
@@ -119,7 +207,8 @@ class StreamfinderExporter:
                 title_id, url_id, title, title_en, year, link,
                 rating, votes_count, plot, image_url, title_type, parent_url,
                 vod_date, distributor, runtime_min, trailer_url, age_rating,
-                scraped_at, date_added
+                scraped_at, date_added,
+                csfd_id, root_id, season_no, episode_no, season_total, episode_total
             FROM csfd_vod.fact_titles
             ORDER BY vod_date DESC NULLS LAST, title_id DESC
         """)
@@ -128,6 +217,7 @@ class StreamfinderExporter:
             "rating", "votes_count", "plot", "image_url", "title_type", "parent_url",
             "vod_date", "distributor", "runtime_min", "trailer_url", "age_rating",
             "scraped_at", "date_added",
+            "csfd_id", "root_id", "season_no", "episode_no", "season_total", "episode_total",
         ]
         titles = []
         for row in session.execute(sql):
@@ -255,6 +345,73 @@ class StreamfinderExporter:
     # Builders
     # ------------------------------------------------------------------
 
+    def _build_hierarchy(self, titles: list[dict], vods_map: dict):
+        """Derive Work↔Release links and per-serial aggregates.
+
+        Returns (root_title_id, serial_agg, episodes_map):
+          root_title_id[root_id] = title_id of the top-level row for that root
+          serial_agg[root_id]    = {season_count, episode_count, first_vod_date,
+                                     last_vod_date, is_running, cadence_days}
+          episodes_map[root_id]  = sorted release list for the modal timeline
+        """
+        from datetime import date, timedelta
+        from statistics import median
+
+        def _d(s):
+            return date.fromisoformat(s) if s else None
+
+        global_max = max((_d(t["vod_date"]) for t in titles if t["vod_date"]), default=None)
+
+        root_title_id: dict[int, int] = {}
+        children: dict[int, list[dict]] = {}
+        for t in titles:
+            rid, cid = t["root_id"], t["csfd_id"]
+            if rid is None:
+                continue
+            if cid == rid:
+                root_title_id[rid] = t["title_id"]
+            else:
+                children.setdefault(rid, []).append(t)
+
+        serial_agg: dict[int, dict] = {}
+        episodes_map: dict[int, list[dict]] = {}
+        for rid, kids in children.items():
+            seasons = [k["season_no"] for k in kids if k["season_no"]]
+            serie_rows = [k for k in kids if k["title_type"] == "série"]
+            ep_rows = [k for k in kids if k["title_type"] == "epizoda" or k["episode_no"]]
+            if seasons:
+                season_count = max(seasons)
+            elif serie_rows:
+                season_count = len(serie_rows)
+            else:
+                season_count = 1  # has episodes but no season markers → assume one season
+            ep_dates = sorted(_d(k["vod_date"]) for k in ep_rows if k["vod_date"])
+            gaps = [(b - a).days for a, b in zip(ep_dates, ep_dates[1:])]
+            serial_agg[rid] = {
+                "season_count": season_count,
+                "episode_count": len(ep_rows),
+                "first_vod_date": ep_dates[0].isoformat() if ep_dates else None,
+                "last_vod_date": ep_dates[-1].isoformat() if ep_dates else None,
+                "is_running": bool(
+                    ep_dates and global_max and ep_dates[-1] >= global_max - timedelta(days=21)
+                ),
+                "cadence_days": round(median(gaps)) if gaps else None,
+            }
+            episodes_map[rid] = [
+                {
+                    "season_no": k["season_no"],
+                    "episode_no": k["episode_no"],
+                    "vod_date": k["vod_date"],
+                    "title": k["title"].split("\n")[0].strip(),
+                    "platforms": [v["platform"] for v in vods_map.get(k["title_id"], [])],
+                }
+                for k in sorted(
+                    ep_rows,
+                    key=lambda k: (k["season_no"] or 0, k["episode_no"] or 0, k["vod_date"] or ""),
+                )
+            ]
+        return root_title_id, serial_agg, episodes_map
+
     def _build_index(
         self,
         titles: list[dict],
@@ -264,18 +421,33 @@ class StreamfinderExporter:
         vods_map: dict,
         tmdb_map: dict,
         title_crew_map: dict[int, list[int]],
+        root_title_id: dict[int, int],
+        serial_agg: dict[int, dict],
     ) -> list[dict]:
         """Lightweight index entry per title for grid/calendar views."""
+        root_poster = _root_posters(titles, tmdb_map)
+        root_platforms = _root_platforms(titles, vods_map)
+        child_platforms = _child_platforms(titles, vods_map)
         index = []
         for t in titles:
             tid = t["title_id"]
-            tmdb = tmdb_map.get(tid, {})
-            poster = (
-                f"{_TMDB_IMG_BASE}/w500{tmdb['poster_path']}"
-                if tmdb.get("poster_path")
-                else t["image_url"]
-            )
-            index.append({
+            rid = t["root_id"]
+            is_toplevel = rid is not None and rid == t["csfd_id"]
+            poster = _poster_url(t, tmdb_map)
+            if not poster and not is_toplevel:
+                poster = root_poster.get(rid)  # episode/season inherits serial artwork
+            platforms = [v["platform"] for v in vods_map.get(tid, [])]
+            if is_toplevel:
+                # A serial never listed on /vod as a whole shows where its episodes air.
+                if not platforms:
+                    platforms = child_platforms.get(rid, [])
+            else:
+                # An episode belongs to its show — the serial's platform list is
+                # fuller and primary-first; fall back to the episode's own only if
+                # the serial has none (its /vod entry is often just an IPTV reseller).
+                platforms = root_platforms.get(rid) or platforms
+            platforms = _sort_platforms(platforms)
+            entry = {
                 "id": tid,
                 "slug": _slug(t["title"], t["year"]),
                 "title": t["title"],
@@ -290,11 +462,41 @@ class StreamfinderExporter:
                 "genres": genres_map.get(tid, []),
                 "tags": tags_map.get(tid, []),
                 "countries": countries_map.get(tid, []),
-                "platforms": [v["platform"] for v in vods_map.get(tid, [])],
+                "platforms": platforms,
                 "crew_ids": title_crew_map.get(tid, []),
                 "link": t["link"],
-            })
+                # hierarchy — Work vs. Release
+                "root_id": rid,
+                "root_title_id": root_title_id.get(rid) if not is_toplevel else None,
+                "is_toplevel": is_toplevel,
+                "season_no": t["season_no"],
+                "episode_no": t["episode_no"],
+            }
+            # Serial shape on the top-level work card (season/episode counts, running).
+            if is_toplevel:
+                shape = self._serial_shape(t, serial_agg)
+                if shape:
+                    entry.update(shape)
+            index.append(entry)
         return index
+
+    def _serial_shape(self, t: dict, serial_agg: dict) -> dict | None:
+        """Card shape for a top-level work. Season/episode counts prefer the
+        authoritative page totals ("Série (N) Epizody (M)") and fall back to what we
+        scraped from VOD; running/cadence always reflect the VOD releases."""
+        agg = serial_agg.get(t["root_id"], {})
+        season_count = t["season_total"] or agg.get("season_count")
+        episode_count = t["episode_total"] or agg.get("episode_count")
+        if not season_count and not episode_count and not agg:
+            return None
+        return {
+            "season_count": season_count,
+            "episode_count": episode_count,
+            "is_running": agg.get("is_running", False),
+            "cadence_days": agg.get("cadence_days"),
+            "first_vod_date": agg.get("first_vod_date"),
+            "last_vod_date": agg.get("last_vod_date"),
+        }
 
     def _build_detail(
         self,
@@ -310,17 +512,26 @@ class StreamfinderExporter:
         reviews_map: dict,
         vods_map: dict,
         tmdb_map: dict,
+        episodes_map: dict[int, list[dict]],
+        serial_agg: dict[int, dict],
+        root_title_id: dict[int, int],
     ) -> dict[str, dict]:
         """Full detail dict keyed by '{title_id}-{slug}'."""
+        root_poster = _root_posters(titles, tmdb_map)
+        root_vods = _root_vods(titles, vods_map)
         detail: dict[str, dict] = {}
         for t in titles:
             tid = t["title_id"]
+            rid = t["root_id"]
+            is_toplevel = rid is not None and rid == t["csfd_id"]
             tmdb = tmdb_map.get(tid, {})
-            poster = (
-                f"{_TMDB_IMG_BASE}/w500{tmdb['poster_path']}"
-                if tmdb.get("poster_path")
-                else t["image_url"]
-            )
+            poster = _poster_url(t, tmdb_map)
+            if not poster and not is_toplevel:
+                poster = root_poster.get(rid)  # episode/season inherits serial artwork
+            vods = vods_map.get(tid, [])
+            if not is_toplevel:
+                vods = root_vods.get(rid) or vods  # episode shows its show's services
+            vods = sorted(vods, key=lambda v: _PLATFORM_PRIORITY.get(v["platform"], 900))
             backdrop = (
                 f"{_TMDB_IMG_BASE}/original{tmdb['backdrop_path']}"
                 if tmdb.get("backdrop_path")
@@ -354,9 +565,22 @@ class StreamfinderExporter:
                 "cinematographers": cinematographers_map.get(tid, []),
                 "composers": composers_map.get(tid, []),
                 "reviews": reviews_map.get(tid, []),
-                "vods": vods_map.get(tid, []),
+                "vods": vods,
                 "link": t["link"],
+                # hierarchy — Work vs. Release
+                "root_id": rid,
+                "root_title_id": root_title_id.get(rid) if not is_toplevel else None,
+                "is_toplevel": is_toplevel,
+                "season_no": t["season_no"],
+                "episode_no": t["episode_no"],
             }
+            # Release timeline + serial shape on the top-level work.
+            if is_toplevel:
+                shape = self._serial_shape(t, serial_agg)
+                if shape:
+                    detail[f"{tid}-{slug}"].update(shape)
+                if rid in episodes_map:
+                    detail[f"{tid}-{slug}"]["episodes"] = episodes_map[rid]
         return detail
 
     def _build_dimensions(

@@ -236,14 +236,52 @@ class VODTitleParser:
             if type_text:
                 data["title_type"] = type_text.lower()
 
-        # --- Parent URL from child URL pattern ---
-        # /film/{parent_id}/{child_id}-slug/prehled/ → parent = /film/{parent_id}-slug/prehled/
-        child_match = re.match(r"(https://www\.csfd\.cz/film/)(\d+)/(\d+)", url)
-        if child_match:
-            parent_id = child_match.group(2)
-            data["parent_url"] = f"https://www.csfd.cz/film/{parent_id}/prehled/"
-            if not data.get("title_type"):
+        # --- Hierarchy: root_id / csfd_id from URL segments ---
+        # /film/{ROOT}-slug/{CHILD}-slug/prehled/ → child (episode/season under a serial)
+        # /film/{ID}-slug/prehled/                → top-level work (root_id == csfd_id)
+        # Each "/{id}-slug/" segment is an id: first = root serial, last = the entity
+        # itself. (A plain "/film/(\d+)" would only see the first segment.)
+        seg_ids = re.findall(r"/(\d+)-[^/]*(?=/)", url)
+        if seg_ids:
+            data["root_id"] = int(seg_ids[0])
+            data["csfd_id"] = int(seg_ids[-1])
+            is_child = data["root_id"] != data["csfd_id"]
+            if is_child and not data.get("title_type"):
                 data["title_type"] = "epizoda"
+
+        # --- Season / episode number ---
+        # Episodes carry a "(S02E05)" or bare "(E07)" marker in the title; standalone
+        # seasons carry only a season number in the URL slug or title.
+        title_text = data.get("title") or ""
+        se = re.search(r"S(\d+)E(\d+)", title_text)
+        if se:
+            data["season_no"] = int(se.group(1))
+            data["episode_no"] = int(se.group(2))
+        else:
+            e_only = re.search(r"\(E(\d+)\)", title_text)
+            if e_only:
+                data["episode_no"] = int(e_only.group(1))
+            if data.get("title_type") == "série":
+                slug_m = re.search(r"/\d+-(?:serie|season)-(\d+)", url)
+                title_m = re.search(r"[Ss](?:érie|erie|eason) (\d+)", title_text)
+                if slug_m:
+                    data["season_no"] = int(slug_m.group(1))
+                elif title_m:
+                    data["season_no"] = int(title_m.group(1))
+
+        # --- Serial totals from the "Série (N) Epizody (M)" header ---
+        # Authoritative counts the show has (single-season shows omit "Série (N)").
+        for h in soup.select("h3"):
+            ht = h.get_text(" ", strip=True)
+            if "Epizody" in ht or "Série" in ht:
+                ms = re.search(r"Série\s*\((\d+)\)", ht)
+                me = re.search(r"Epizody\s*\((\d+)\)", ht)
+                if ms:
+                    data["season_total"] = int(ms.group(1))
+                if me:
+                    data["episode_total"] = int(me.group(1))
+                if ms or me:
+                    break
 
         # --- Reviews (first 3, as JSON) ---
         review_articles = soup.select("article.article-review")[:3]

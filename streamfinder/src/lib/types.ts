@@ -16,6 +16,19 @@ export interface TitleIndex {
 	platforms: string[];
 	crew_ids: number[];
 	link: string;
+	// Hierarchy — Work vs. Release
+	root_id: number | null;
+	root_title_id: number | null; // top-level work's title_id (null when this row IS the work)
+	is_toplevel: boolean;
+	season_no: number | null;
+	episode_no: number | null;
+	// Serial shape — present on top-level serial/pořad cards
+	season_count?: number;
+	episode_count?: number;
+	first_vod_date?: string | null;
+	last_vod_date?: string | null;
+	is_running?: boolean;
+	cadence_days?: number | null;
 }
 
 export interface TitleDetail extends TitleIndex {
@@ -30,6 +43,15 @@ export interface TitleDetail extends TitleIndex {
 	composers: string[];
 	reviews: Review[];
 	vods: Vod[];
+	episodes?: EpisodeRelease[]; // release timeline on top-level serials
+}
+
+export interface EpisodeRelease {
+	season_no: number | null;
+	episode_no: number | null;
+	vod_date: string | null;
+	title: string;
+	platforms: string[];
 }
 
 export interface Review {

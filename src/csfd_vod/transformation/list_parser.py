@@ -12,6 +12,13 @@ logger = get_logger(__name__)
 
 _CSFD_BASE = "https://www.csfd.cz"
 
+# Theatrical / home-video distributors — never a streaming service, so they must not
+# leak in via the "distributor = platform" fallback below.
+_NON_STREAMING_DISTRIBUTORS = {
+    "bontonfilm", "cinemart", "falcon", "bioscop", "aerofilms", "magic box",
+    "forum film", "vertical entertainment", "bohemia motion pictures", "a-company",
+}
+
 # "V nabídce od 5. 4. 2026" or "V nabidce od 14.01.2015"
 _VOD_DATE_RE = re.compile(r"(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})")
 
@@ -67,6 +74,7 @@ class VODListParser:
             "film_url": None,
             "list_type": None,
             "distributor": None,
+            "platforms": [],
         }
 
         # Film URL — .article-img a[href]
@@ -95,5 +103,24 @@ class VODListParser:
                 if len(parts) == 2:
                     entry["distributor"] = parts[1].strip() or None
                 break
+
+        # VOD platforms — "/vod/{platform}/" links (Netflix, Disney+, …). This is the
+        # authoritative source: serial/episode detail pages often have no VOD box.
+        platforms = []
+        for a in article.select("a[href*='/vod/']"):
+            m = re.search(r"/vod/([^/?]+)/", a.get("href", ""))
+            name = a.get_text(strip=True)
+            if m and name and name not in platforms:
+                platforms.append(name)
+
+        # Fallback: some services (Paramount+, Hulu, Peacock…) have no ČSFD /vod page,
+        # so no link — but the listing names them as the "Distributor". For a VOD
+        # listing the distributor IS the streaming service, unless it's a theatrical one.
+        if not platforms and entry.get("distributor"):
+            dist = entry["distributor"]
+            if dist.lower() not in _NON_STREAMING_DISTRIBUTORS:
+                platforms.append(dist)
+
+        entry["platforms"] = platforms
 
         return entry
