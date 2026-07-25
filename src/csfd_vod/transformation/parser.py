@@ -114,13 +114,28 @@ class VODTitleParser:
             elif m_match:
                 data["runtime_min"] = int(m_match.group(1))
 
-        # --- Genres — .genres a ---
+        # --- Genres — .genres container ---
+        # CSFD only hyperlinks genres that have a dedicated /zanry/ page; secondary
+        # genres (Mysteriózní, Rodinný, Stand-up, Sportovní, Reality-TV, Hudební…)
+        # are rendered as bare text nodes between bullet separators. Collect BOTH the
+        # <a> links and the bare text, skipping the <span class="bullet"> separators.
         genre_selector = self.selectors.get("title_page", {}).get("genre_selector", ".genres a")
-        genre_elems = soup.select(genre_selector)
-        if genre_elems:
-            genres = " / ".join(e.get_text(strip=True) for e in genre_elems)
-            if genres:
-                data["genres"] = genres
+        container_selector = genre_selector[:-2] if genre_selector.endswith(" a") else genre_selector
+        genre_container = soup.select_one(container_selector)
+        if genre_container is not None:
+            parts = []
+            for node in genre_container.children:
+                name = getattr(node, "name", None)
+                if name == "a":
+                    text = node.get_text(strip=True)
+                elif name is None:  # NavigableString — a bare genre or whitespace
+                    text = str(node).strip()
+                else:  # <span class="bullet"> and any other element = separator
+                    text = ""
+                if text:
+                    parts.append(text)
+            if parts:
+                data["genres"] = " / ".join(parts)
 
         # --- Director — <h4>Režie:</h4> sibling <a> links ---
         director = self._extract_crew(soup, "Režie:")

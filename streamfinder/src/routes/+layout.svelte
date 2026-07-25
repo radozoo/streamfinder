@@ -103,14 +103,28 @@
 	/* Search icon */
 	.nav-search {
 		margin-left: auto;
-		color: var(--text-secondary);
-		transition: color 0.2s;
 		display: flex;
 		align-items: center;
+		justify-content: center;
+		padding: 0.4rem;
+		background: none;
+		border: none;
+		border-radius: 8px;
+		color: var(--text-muted);
+		cursor: pointer;
+		transition: color 0.2s, background 0.2s;
+		-webkit-appearance: none;
+		appearance: none;
 	}
 
 	.nav-search:hover {
 		color: var(--amber);
+		background: rgba(255, 255, 255, 0.06);
+	}
+
+	.nav-search:focus-visible {
+		outline: 2px solid var(--amber);
+		outline-offset: 2px;
 	}
 
 	/* Footer */

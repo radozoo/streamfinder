@@ -13,37 +13,51 @@ export const load: PageLoad = async ({ parent }) => {
 	const thisMonthStart = today.toISOString().slice(0, 7) + '-01';
 	const todayStr = today.toISOString().slice(0, 10);
 
-	// Featured title: the best recent work. Very fresh releases have few votes yet, so
-	// relax the bar progressively (window / rating / votes) — there is always a pick.
+	// Featured carousel: the 4–5 most interesting recent works. A hero slide needs an
+	// image, so a poster is mandatory. "Interesting" = rating tempered by how many
+	// people voted (fresh releases have few votes, so don't let a 90% / 12-vote fluke
+	// outrank a well-established 82%). Widen the window progressively until we have
+	// enough slides — there is always a set.
+	const FEATURED_COUNT = 5;
+
 	const isFeaturable = (t: (typeof titles)[number]) =>
-		t.title_type === 'film' || (t.is_toplevel && (t.title_type === 'seriál' || t.title_type === 'tv film'));
+		Boolean(t.poster) &&
+		(t.title_type === 'film' ||
+			(t.is_toplevel && (t.title_type === 'seriál' || t.title_type === 'tv film')));
 
-	const featuredTiers: [number, number, number][] = [
-		[21, 75, 100],
-		[45, 72, 50],
-		[60, 70, 20],
-		[90, 68, 5],
-		[120, 0, 0], // last resort: highest-rated recent work, whatever the votes
-	];
+	const featuredScore = (t: (typeof titles)[number]) => {
+		const rating = t.rating ?? 0;
+		const votes = t.votes_count ?? 0;
+		const voteWeight = Math.min(1, votes / 500); // full confidence at ~500 votes
+		return rating * (0.6 + 0.4 * voteWeight);
+	};
 
-	const findFeatured = (days: number, minRating: number, minVotes: number) =>
-		titles
-			.filter(
-				(t) =>
-					t.vod_date &&
-					t.vod_date >= daysAgo(days) &&
-					t.vod_date <= todayStr &&
-					isFeaturable(t) &&
-					(t.rating ?? 0) >= minRating &&
-					(t.votes_count ?? 0) >= minVotes
-			)
-			.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))[0] ?? null;
+	const pickFeatured = (count: number) => {
+		for (const [days, minRating] of [
+			[45, 65],
+			[75, 62],
+			[120, 60],
+		] as const) {
+			const cands = titles
+				.filter(
+					(t) =>
+						t.vod_date &&
+						t.vod_date >= daysAgo(days) &&
+						t.vod_date <= todayStr &&
+						isFeaturable(t) &&
+						(t.rating ?? 0) >= minRating
+				)
+				.sort((a, b) => featuredScore(b) - featuredScore(a));
+			if (cands.length >= count) return cands.slice(0, count);
+		}
+		// last resort: best-scored recent works with a poster, whatever the rating
+		return titles
+			.filter((t) => t.vod_date && t.vod_date <= todayStr && isFeaturable(t))
+			.sort((a, b) => featuredScore(b) - featuredScore(a))
+			.slice(0, count);
+	};
 
-	let featured = null;
-	for (const [days, r, v] of featuredTiers) {
-		featured = findFeatured(days, r, v);
-		if (featured) break;
-	}
+	const featuredList = pickFeatured(FEATURED_COUNT);
 
 	// New this week (past 7 days)
 	const weekCutoff = daysAgo(7);
@@ -88,5 +102,5 @@ export const load: PageLoad = async ({ parent }) => {
 		),
 	};
 
-	return { featured, newThisWeek, bestThisMonth, recentDates, stats, dimensions };
+	return { featuredList, newThisWeek, bestThisMonth, recentDates, stats, dimensions };
 };

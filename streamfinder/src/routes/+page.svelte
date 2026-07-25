@@ -2,7 +2,6 @@
 	import type { PageData } from './$types';
 	import { base } from '$app/paths';
 	import PosterCard from '$lib/components/PosterCard.svelte';
-	import type { TitleIndex } from '$lib/types';
 
 	let { data }: { data: PageData } = $props();
 
@@ -17,73 +16,139 @@
 		if (r >= 60) return 'rating-good';
 		return 'rating-avg';
 	}
+
+	// ── Hero carousel ────────────────────────────────────────────────────
+	const slides = data.featuredList;
+	const SLIDE_MS = 6500;
+
+	let current = $state(0);
+	let paused = $state(false);
+
+	function goTo(i: number) {
+		current = (i + slides.length) % slides.length;
+	}
+	function next() {
+		goTo(current + 1);
+	}
+	function prev() {
+		goTo(current - 1);
+	}
+
+	// Auto-advance. The effect re-runs whenever `current` or `paused` changes, so the
+	// timer restarts cleanly after a manual jump or a hover-pause. Respects
+	// prefers-reduced-motion — no auto-rotation for viewers who opt out.
+	$effect(() => {
+		if (slides.length <= 1 || paused) return;
+		if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+		current; // track, so the timer resets on every slide change
+		const id = setTimeout(next, SLIDE_MS);
+		return () => clearTimeout(id);
+	});
 </script>
 
-<!-- Hero -->
-<section class="hero">
-	{#if data.featured}
-		{@const f = data.featured}
-		<div class="hero-featured">
-			{#if f.poster}
-				<div class="hero-poster">
-					<img src={f.poster} alt={f.title} loading="eager" />
+<!-- Hero carousel -->
+{#if slides.length > 0}
+	<section
+		class="hero"
+		onmouseenter={() => (paused = true)}
+		onmouseleave={() => (paused = false)}
+		onfocusin={() => (paused = true)}
+		onfocusout={() => (paused = false)}
+		aria-roledescription="carousel"
+		aria-label="Doporučené tituly"
+	>
+		{#each slides as f, i}
+			<article class="hero-slide" class:active={i === current} inert={i !== current}>
+				<div class="hero-bg" style="background-image:url({f.poster})"></div>
+				<div class="hero-scrim"></div>
+				<div class="hero-inner">
+					<a href="{base}/titul/{f.id}/{f.slug}" class="hero-poster">
+						<img src={f.poster} alt={f.title} loading={i === 0 ? 'eager' : 'lazy'} />
+					</a>
+					<div class="hero-info">
+						<div class="hero-badges">
+							{#each f.platforms.slice(0, 2) as p}
+								<span class="vod-badge">{p}</span>
+							{/each}
+							{#if f.vod_date}
+								<span class="hero-date">od {formatDate(f.vod_date)}</span>
+							{/if}
+						</div>
+						<h1 class="hero-title">{f.title}</h1>
+						{#if f.title_en && f.title_en !== f.title}
+							<p class="hero-title-en">{f.title_en} ({f.year})</p>
+						{:else if f.year}
+							<p class="hero-title-en">{f.year}</p>
+						{/if}
+						<div class="hero-meta">
+							{#if f.rating !== null}
+								<span class="hero-rating {ratingClass(f.rating)}">{f.rating} %</span>
+							{/if}
+							{#if f.votes_count}
+								<span class="hero-votes">{f.votes_count.toLocaleString('cs-CZ')} hodnocení</span>
+							{/if}
+							{#if f.runtime_min}
+								<span class="hero-runtime">{Math.floor(f.runtime_min / 60)}h {f.runtime_min % 60}min</span>
+							{/if}
+						</div>
+						<div class="hero-genres">
+							{#each f.genres.slice(0, 4) as g}
+								<a href="{base}/katalog?genre={encodeURIComponent(g)}" class="pill">{g}</a>
+							{/each}
+						</div>
+						<a href="{base}/titul/{f.id}/{f.slug}" class="hero-cta">Detail →</a>
+					</div>
 				</div>
-			{/if}
-			<div class="hero-info">
-				<div class="hero-badges">
-					{#each f.platforms.slice(0, 2) as p}
-						<span class="vod-badge">{p}</span>
-					{/each}
-					{#if f.vod_date}
-						<span class="hero-date">od {formatDate(f.vod_date)}</span>
-					{/if}
-				</div>
-				<h1 class="hero-title">{f.title}</h1>
-				{#if f.title_en && f.title_en !== f.title}
-					<p class="hero-title-en">{f.title_en} ({f.year})</p>
-				{:else if f.year}
-					<p class="hero-title-en">{f.year}</p>
-				{/if}
-				<div class="hero-meta">
-					{#if f.rating !== null}
-						<span class="hero-rating {ratingClass(f.rating)}">{f.rating} %</span>
-					{/if}
-					{#if f.votes_count}
-						<span class="hero-votes">{f.votes_count.toLocaleString('cs-CZ')} hodnocení</span>
-					{/if}
-					{#if f.runtime_min}
-						<span class="hero-runtime">{Math.floor(f.runtime_min / 60)}h {f.runtime_min % 60}min</span>
-					{/if}
-				</div>
-				<div class="hero-genres">
-					{#each f.genres.slice(0, 4) as g}
-						<a href="{base}/katalog?genre={encodeURIComponent(g)}" class="pill">{g}</a>
-					{/each}
-				</div>
-				<a href="{base}/titul/{f.id}/{f.slug}" class="hero-cta">Detail →</a>
-			</div>
-		</div>
+			</article>
+		{/each}
 
-		<div class="hero-recent">
-			<div class="recent-section">
-				<h3 class="recent-heading">Nedávno přibylo</h3>
-				<ul class="recent-dates">
-					{#each data.recentDates as [date, count]}
-						<li>
-							<span class="recent-date">{formatDate(date)}</span>
-							<span class="recent-count">{count} {count === 1 ? 'titul' : count < 5 ? 'tituly' : 'titulů'}</span>
-						</li>
-					{/each}
-				</ul>
-				<a href="{base}/kalendar" class="recent-cta">Celý kalendář →</a>
+		{#if slides.length > 1}
+			<button class="hero-nav prev" onclick={prev} aria-label="Předchozí titul">‹</button>
+			<button class="hero-nav next" onclick={next} aria-label="Další titul">›</button>
+
+			<div class="hero-progress" role="tablist" aria-label="Přepínač titulů">
+				{#each slides as f, i}
+					<button
+						class="seg"
+						class:active={i === current}
+						class:done={i < current}
+						onclick={() => goTo(i)}
+						role="tab"
+						aria-selected={i === current}
+						aria-label="{f.title} ({i + 1}/{slides.length})"
+					>
+						{#if i === current}
+							{#key current}
+								<span class="seg-fill" class:paused style="animation-duration:{SLIDE_MS}ms"></span>
+							{/key}
+						{/if}
+					</button>
+				{/each}
 			</div>
+		{/if}
+	</section>
+
+	{#if data.recentDates.length > 0}
+		<div class="recent-strip page-container">
+			<span class="recent-strip-label">Nedávno přibylo</span>
+			<div class="recent-strip-dates">
+				{#each data.recentDates as [date, count]}
+					<a href="{base}/kalendar" class="recent-chip">
+						<span class="recent-chip-date">{formatDate(date)}</span>
+						<span class="recent-chip-count">{count}</span>
+					</a>
+				{/each}
+			</div>
+			<a href="{base}/kalendar" class="recent-strip-cta">Celý kalendář →</a>
 		</div>
-	{:else}
+	{/if}
+{:else}
+	<section class="hero hero--empty">
 		<div class="hero-empty">
 			<p>Žádný doporučený titul momentálně není k dispozici.</p>
 		</div>
-	{/if}
-</section>
+	</section>
+{/if}
 
 <!-- New this week -->
 {#if data.newThisWeek.length > 0}
@@ -144,30 +209,77 @@
 </section>
 
 <style>
-	/* Hero */
+	/* Hero carousel — cinematic stage */
 	.hero {
-		display: grid;
-		grid-template-columns: 1fr auto;
-		min-height: 480px;
-		background: linear-gradient(135deg, var(--navy-800), var(--navy-900));
+		position: relative;
+		min-height: 460px;
+		overflow: hidden;
+		background: var(--navy-900);
 		border-bottom: 1px solid var(--border);
 	}
 
-	.hero-featured {
+	.hero--empty {
+		min-height: 200px;
+	}
+
+	.hero-slide {
+		position: absolute;
+		inset: 0;
+		opacity: 0;
+		visibility: hidden;
+		transition: opacity 0.7s ease;
+	}
+
+	.hero-slide.active {
+		opacity: 1;
+		visibility: visible;
+	}
+
+	/* Ambient blurred poster fills the stage and changes with each title */
+	.hero-bg {
+		position: absolute;
+		inset: -12%; /* bleed so the blur's soft edges stay off-screen */
+		background-size: cover;
+		background-position: center 22%;
+		filter: blur(38px) saturate(1.2) brightness(0.55);
+		transform: scale(1.15);
+	}
+
+	.hero-scrim {
+		position: absolute;
+		inset: 0;
+		background:
+			linear-gradient(90deg, rgba(6, 11, 25, 0.94) 0%, rgba(6, 11, 25, 0.74) 45%, rgba(6, 11, 25, 0.5) 100%),
+			linear-gradient(0deg, rgba(6, 11, 25, 0.85), transparent 55%);
+	}
+
+	.hero-inner {
+		position: relative;
 		display: flex;
 		align-items: center;
 		gap: 2.5rem;
-		padding: 3rem 2.5rem;
+		max-width: 1400px;
+		margin: 0 auto;
+		min-height: 460px;
+		padding: 3rem 2.5rem 3.75rem;
 	}
 
 	.hero-poster {
-		flex: 0 0 200px;
+		flex: 0 0 210px;
+		display: block;
+		border-radius: var(--radius);
+		overflow: hidden;
+		box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+		transition: transform 0.25s;
+	}
+
+	.hero-poster:hover {
+		transform: translateY(-4px);
 	}
 
 	.hero-poster img {
 		width: 100%;
-		border-radius: var(--radius);
-		box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+		display: block;
 		aspect-ratio: 2/3;
 		object-fit: cover;
 	}
@@ -247,61 +359,181 @@
 		background: var(--amber-dim);
 	}
 
-	/* Recent arrivals sidebar */
-	.hero-recent {
-		padding: 3rem 2.5rem 3rem 0;
-		width: 280px;
+	/* Carousel navigation arrows */
+	.hero-nav {
+		position: absolute;
+		top: 50%;
+		transform: translateY(-50%);
+		z-index: 3;
+		width: 44px;
+		height: 44px;
 		display: flex;
 		align-items: center;
+		justify-content: center;
+		font-size: 1.8rem;
+		line-height: 1;
+		color: var(--text-secondary);
+		background: rgba(8, 14, 30, 0.4);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 50%;
+		cursor: pointer;
+		opacity: 0;
+		transition: opacity 0.2s, background 0.2s, color 0.2s;
 	}
 
-	.recent-section {
-		width: 100%;
+	.hero:hover .hero-nav {
+		opacity: 1;
 	}
 
-	.recent-heading {
-		font-size: 0.75rem;
+	.hero-nav:hover {
+		background: rgba(8, 14, 30, 0.78);
+		color: var(--amber);
+	}
+
+	.hero-nav:focus-visible {
+		opacity: 1;
+		outline: 2px solid var(--amber);
+		outline-offset: 2px;
+	}
+
+	.hero-nav.prev {
+		left: 1rem;
+	}
+	.hero-nav.next {
+		right: 1rem;
+	}
+
+	/* Segmented progress track — one bar per slide, active one fills as a timer */
+	.hero-progress {
+		position: absolute;
+		bottom: 1.25rem;
+		left: 2.5rem;
+		z-index: 3;
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.seg {
+		position: relative;
+		width: 40px;
+		height: 4px;
+		padding: 0;
+		border: none;
+		border-radius: 2px;
+		background: rgba(255, 255, 255, 0.2);
+		cursor: pointer;
+		overflow: hidden;
+		transition: background 0.2s;
+	}
+
+	.seg:hover {
+		background: rgba(255, 255, 255, 0.34);
+	}
+
+	.seg.done {
+		background: rgba(255, 255, 255, 0.5);
+	}
+
+	.seg:focus-visible {
+		outline: 2px solid var(--amber);
+		outline-offset: 3px;
+	}
+
+	.seg-fill {
+		position: absolute;
+		inset: 0;
+		background: var(--amber);
+		transform-origin: left;
+		transform: scaleX(0);
+		animation: seg-fill linear forwards;
+	}
+
+	.seg-fill.paused {
+		animation-play-state: paused;
+	}
+
+	@keyframes seg-fill {
+		from {
+			transform: scaleX(0);
+		}
+		to {
+			transform: scaleX(1);
+		}
+	}
+
+	/* Recent-arrivals strip below the hero */
+	.recent-strip {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		padding-top: 1rem;
+		padding-bottom: 1rem;
+		flex-wrap: wrap;
+		border-bottom: 1px solid var(--border);
+	}
+
+	.recent-strip-label {
+		font-size: 0.72rem;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
 		color: var(--text-muted);
-		margin-bottom: 1rem;
+		white-space: nowrap;
 	}
 
-	.recent-dates {
-		list-style: none;
+	.recent-strip-dates {
 		display: flex;
-		flex-direction: column;
-		gap: 0.6rem;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+		flex: 1;
 	}
 
-	.recent-dates li {
-		display: flex;
-		justify-content: space-between;
+	.recent-chip {
+		display: inline-flex;
 		align-items: baseline;
-		gap: 1rem;
+		gap: 0.4rem;
+		padding: 0.3rem 0.7rem;
+		background: var(--navy-700);
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		font-size: 0.8rem;
+		transition: border-color 0.2s, background 0.2s;
 	}
 
-	.recent-date {
-		font-size: 0.85rem;
+	.recent-chip:hover {
+		border-color: var(--amber);
+		background: var(--navy-600);
+	}
+
+	.recent-chip-date {
 		color: var(--text-primary);
 	}
 
-	.recent-count {
-		font-size: 0.75rem;
+	.recent-chip-count {
 		color: var(--text-muted);
+		font-size: 0.72rem;
+		font-variant-numeric: tabular-nums;
 	}
 
-	.recent-cta {
-		display: block;
-		margin-top: 1.25rem;
+	.recent-strip-cta {
 		font-size: 0.8rem;
 		color: var(--amber);
+		white-space: nowrap;
 	}
 
 	.hero-empty {
 		padding: 3rem;
 		color: var(--text-muted);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.hero-slide {
+			transition: none;
+		}
+		.seg-fill {
+			animation: none;
+			transform: scaleX(1);
+		}
 	}
 
 	/* Genre tiles */
@@ -383,14 +615,13 @@
 	}
 
 	@media (max-width: 900px) {
-		.hero {
-			grid-template-columns: 1fr;
+		.hero,
+		.hero-inner {
+			min-height: 440px;
 		}
-		.hero-recent {
-			display: none;
-		}
-		.hero-featured {
-			padding: 2rem 1.5rem;
+		.hero-inner {
+			padding: 2rem 1.5rem 3.25rem;
+			gap: 1.5rem;
 		}
 		.hero-poster {
 			flex: 0 0 140px;
@@ -398,10 +629,26 @@
 		.hero-title {
 			font-size: 1.5rem;
 		}
+		.hero-progress {
+			left: 1.5rem;
+		}
 	}
 
 	@media (max-width: 640px) {
+		.hero,
+		.hero-inner {
+			min-height: 400px;
+		}
 		.hero-poster {
+			display: none;
+		}
+		.hero-scrim {
+			background: linear-gradient(0deg, rgba(6, 11, 25, 0.94), rgba(6, 11, 25, 0.5));
+		}
+		.hero-nav {
+			display: none;
+		}
+		.recent-strip-cta {
 			display: none;
 		}
 		.home-stats {
