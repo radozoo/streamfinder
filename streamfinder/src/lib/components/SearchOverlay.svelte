@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { TitleIndex } from '$lib/types';
 	import { base } from '$app/paths';
+	import { fold } from '$lib/search';
 
 	interface Props {
 		titles: TitleIndex[];
@@ -15,13 +16,10 @@
 	const MAX_RESULTS = 8;
 
 	let results = $derived.by(() => {
-		const q = query.trim().toLowerCase();
+		const q = fold(query.trim());
 		if (!q) return [];
 		return titles
-			.filter(
-				(t) =>
-					t.title.toLowerCase().includes(q) || (t.title_en ?? '').toLowerCase().includes(q)
-			)
+			.filter((t) => fold(t.title).includes(q) || fold(t.title_en ?? '').includes(q))
 			.slice(0, MAX_RESULTS);
 	});
 

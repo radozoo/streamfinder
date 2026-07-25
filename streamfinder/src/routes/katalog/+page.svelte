@@ -9,6 +9,7 @@
 	import AutocompleteDropdown from '$lib/components/AutocompleteDropdown.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
 	import { base } from '$app/paths';
+	import { fold } from '$lib/search';
 	import { untrack } from 'svelte';
 	import { loadCrewIndex, isCrewLoaded } from '$lib/data/crew';
 
@@ -69,16 +70,12 @@
 
 	// ── Filtered + sorted titles ──────────────────────────────────────────────
 	let filtered = $derived.by(() => {
-		const q = searchQuery.trim().toLowerCase();
+		const q = fold(searchQuery.trim());
 		return data.titles
 			.filter((t) => {
 				// Katalóg shows works only — episodes/seasons roll up under their serial.
 				if (t.is_toplevel === false) return false;
-				if (
-					q &&
-					!t.title.toLowerCase().includes(q) &&
-					!(t.title_en ?? '').toLowerCase().includes(q)
-				)
+				if (q && !fold(t.title).includes(q) && !fold(t.title_en ?? '').includes(q))
 					return false;
 				if (selectedGenres.length && !selectedGenres.some((g) => t.genres.includes(g)))
 					return false;

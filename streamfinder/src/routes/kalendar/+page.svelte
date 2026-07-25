@@ -7,6 +7,7 @@
 	import FilterBar from '$lib/components/FilterBar.svelte';
 	import ActiveFilters from '$lib/components/ActiveFilters.svelte';
 	import { base } from '$app/paths';
+	import { fold } from '$lib/search';
 	import { loadCrewIndex, isCrewLoaded } from '$lib/data/crew';
 
 	let { data }: { data: PageData } = $props();
@@ -140,8 +141,8 @@
 
 	// Full filter predicate — identical facets to Katalog.
 	function passesFilters(t: TitleIndex): boolean {
-		const q = searchQuery.trim().toLowerCase();
-		if (q && !t.title.toLowerCase().includes(q) && !(t.title_en ?? '').toLowerCase().includes(q)) return false;
+		const q = fold(searchQuery.trim());
+		if (q && !fold(t.title).includes(q) && !fold(t.title_en ?? '').includes(q)) return false;
 		if (selectedGenres.length && !selectedGenres.some((g) => t.genres.includes(g))) return false;
 		if (selectedPlatforms.length && !selectedPlatforms.some((p) => t.platforms.includes(p))) return false;
 		if (selectedCountries.length && !selectedCountries.some((c) => t.countries.includes(c))) return false;
