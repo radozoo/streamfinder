@@ -175,10 +175,11 @@ class VODScraper:
         "sky-showtime", "apple-tv", "oneplay", "prima-plus",
     ]
 
-    # A real listing page is hundreds of KB; a bot-protection challenge stub (no
-    # listing, just an `ab_detection` script) observed at 334 bytes. Anything this
-    # small is a failed fetch, not a legitimately empty/short page.
-    _MIN_LISTING_PAGE_BYTES = 5000
+    # A real listing page is 185KB+; observed challenge/consent stubs (no listing,
+    # just ab_detection/consent scripts) were 331 and 7207 bytes — a huge, stable
+    # gap. 50KB sits in the middle with wide margin on both sides. Anything below
+    # it is a failed fetch, never a legitimately empty/short page.
+    _MIN_LISTING_PAGE_BYTES = 50_000
 
     def scrape_vod_platform_page(self, platform_slug: str, page: int = 1) -> Tuple[List[str], str]:
         """Scrape film URLs from a single page of a platform's /vod/{slug}/ listing."""
