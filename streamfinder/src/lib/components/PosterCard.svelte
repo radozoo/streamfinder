@@ -89,6 +89,14 @@
 		<div class="card-meta">
 			{#if title.rating !== null}
 				<span class="card-rating">{title.rating} %</span>
+			{:else if title.inherited_rating != null}
+				<span
+					class="card-rating inherited"
+					title="Vlastní hodnocení zatím není — převzato ze {title.inherited_from ===
+					'série'
+						? 'série'
+						: 'seriálu'}"
+				>≈ {title.inherited_rating} %</span>
 			{/if}
 			{#if title.year}
 				<span class="card-year">{title.year}</span>

@@ -170,7 +170,8 @@
 		if (skip !== 'type' && f.type && t.title_type !== f.type) return false;
 		if (skip !== 'year' && f.yearFrom > YEAR_MIN && (t.year ?? 0) < f.yearFrom) return false;
 		if (skip !== 'year' && f.yearTo < YEAR_MAX && (t.year ?? 9999) > f.yearTo) return false;
-		if (skip !== 'rating' && f.ratingMin > 0 && (t.rating ?? 0) < f.ratingMin) return false;
+		if (skip !== 'rating' && f.ratingMin > 0 && (t.rating ?? t.inherited_rating ?? 0) < f.ratingMin)
+			return false;
 		if (skip !== 'crew' && f.crew.length && f.crewNames) {
 			const names = (t.crew_ids ?? []).map((id) => f.crewNames!.get(id)).filter(Boolean);
 			if (!f.crew.some((name) => names.includes(name))) return false;

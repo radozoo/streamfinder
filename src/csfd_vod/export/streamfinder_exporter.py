@@ -474,6 +474,18 @@ class StreamfinderExporter:
         root_poster = _root_posters(titles, tmdb_map)
         root_platforms = _root_platforms(titles, vods_map)
         child_platforms = _child_platforms(titles, vods_map)
+        # Rating inheritance sources: a brand-new episode has no rating of its own,
+        # so it borrows the season's, else the serial's (see _inherited_rating).
+        root_rating: dict[int, int] = {}
+        season_rating: dict[tuple, int] = {}
+        for t in titles:
+            rid = t["root_id"]
+            if rid is None or t["rating"] is None:
+                continue
+            if rid == t["csfd_id"]:
+                root_rating[rid] = t["rating"]
+            elif t["title_type"] == "série" and t["season_no"] is not None:
+                season_rating[(rid, t["season_no"])] = t["rating"]
         index = []
         for t in titles:
             tid = t["title_id"]
@@ -518,6 +530,12 @@ class StreamfinderExporter:
                 "season_no": t["season_no"],
                 "episode_no": t["episode_no"],
             }
+            # A fresh episode/season with no rating of its own borrows one to show,
+            # clearly marked as inherited so it never poses as the episode's own score.
+            if not is_toplevel and t["rating"] is None:
+                inh = self._inherited_rating(rid, t["season_no"], root_rating, season_rating)
+                if inh is not None:
+                    entry["inherited_rating"], entry["inherited_from"] = inh
             # Serial shape on the top-level work card (season/episode counts, running).
             if is_toplevel:
                 shape = self._serial_shape(t, serial_agg)
@@ -525,6 +543,16 @@ class StreamfinderExporter:
                     entry.update(shape)
             index.append(entry)
         return index
+
+    @staticmethod
+    def _inherited_rating(rid, season_no, root_rating: dict, season_rating: dict) -> tuple | None:
+        """A non-top-level row's fallback rating: season first, then serial.
+        Returns (rating, source) where source is 'série' or 'seriál', or None."""
+        if season_no is not None and (rid, season_no) in season_rating:
+            return season_rating[(rid, season_no)], "série"
+        if rid in root_rating:
+            return root_rating[rid], "seriál"
+        return None
 
     def _serial_shape(self, t: dict, serial_agg: dict) -> dict | None:
         """Card shape for a top-level work. Season/episode counts prefer the

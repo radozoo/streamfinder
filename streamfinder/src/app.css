@@ -140,6 +140,15 @@ a {
 	color: var(--amber);
 }
 
+/* Inherited rating (episode with no own score, borrowed from série/seriál):
+   muted and lighter so it reads as a hint, never as the episode's own rating.
+   The "≈" prefix in the markup reinforces that it's approximate. */
+.poster-card .card-rating.inherited {
+	font-weight: 600;
+	color: var(--text-muted);
+	opacity: 0.85;
+}
+
 .poster-card .card-year {
 	font-size: 0.75rem;
 	color: var(--text-muted);

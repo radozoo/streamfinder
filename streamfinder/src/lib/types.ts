@@ -22,6 +22,9 @@ export interface TitleIndex {
 	is_toplevel: boolean;
 	season_no: number | null;
 	episode_no: number | null;
+	// Rating borrowed from the série/seriál when an episode has no own rating yet.
+	inherited_rating?: number;
+	inherited_from?: 'série' | 'seriál';
 	// Serial shape — present on top-level serial/pořad cards
 	season_count?: number;
 	episode_count?: number;
