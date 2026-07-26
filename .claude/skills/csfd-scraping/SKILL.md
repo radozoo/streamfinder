@@ -56,6 +56,12 @@ Full detail + code pointers in **`docs/csfd-scraping-rules.md`**. The short list
   Verify against the scraped page before deleting suspicious-looking data.
 - **Hierarchy:** `root_id` = first `/film/{id}` segment, `csfd_id` = last;
   `is_toplevel = root_id == csfd_id`. Katalóg = works, Kalendár = release events.
+- **Slug drift → duplicates.** ČSFD renames slugs over time (`…-episode-5/` →
+  `…-pamet/`, `…-the-miniature-wife/` → `…-miniaturni-manzelka/`) while the id
+  stays. Since `url_id` carries the slug, a rename INSERTs a *second* row for the
+  same `csfd_id` → the title renders twice. Identity is `csfd_id`, not `url_id`.
+  `scripts/dedupe_titles.py` cleans it (DB + cache + vod_urls), `update` self-heals
+  after load, and the exporter dedupes by `csfd_id` as a net. See rules doc §11.
 
 ## Keeping the catalog fresh over time
 

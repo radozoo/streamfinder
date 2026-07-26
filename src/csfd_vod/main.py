@@ -501,6 +501,22 @@ def cmd_update(args) -> dict:
         summary["success"] = False
         return summary
 
+    # ── 3b. dedupe (self-heal ČSFD slug drift) ────────────────────────────────
+    # ČSFD renames slugs over time (episode-5 → pamet), and since url_id carries
+    # the slug the loader inserts a second row for the same csfd_id — a title that
+    # would then render twice. Collapse rows sharing a csfd_id (keep the richest)
+    # and drop non-overview junk, pruning their cache + vod_urls so a re-parse
+    # can't resurrect them. See scripts/dedupe_titles.py / docs csfd-scraping-rules.
+    from scripts.dedupe_titles import dedupe as _dedupe_titles
+    dloader = PostgresLoader(config.database.connection_string)
+    try:
+        summary["steps"]["dedupe"] = _dedupe_titles(
+            dloader, cache=cache, cache_dir=config.cache_dir, apply=True
+        )
+    finally:
+        dloader.close()
+    logger.info("cmd_update_dedupe_complete", run_id=run_id, **summary["steps"]["dedupe"])
+
     # ── 4. enrich (missing only) ──────────────────────────────────────────────
     if not args.skip_enrich:
         summary["steps"]["enrich"] = cmd_enrich(argparse.Namespace(limit=None, force=False))

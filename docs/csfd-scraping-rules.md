@@ -143,3 +143,33 @@ junk from early dev — `"Director 1"`, `"Actor 1/2"`, and url-less `Netflix/Pri
 - After a harvest: check the returned `complete` / `incomplete_months`.
 - **Rule of thumb:** every real gap you find becomes a new canary in
   `check_completeness.py`. Executable knowledge doesn't rot; prose does.
+
+## 11. Slug drift → duplicate titles
+
+ČSFD **renames a title's URL slug over time** while the numeric id stays fixed:
+
+- a pre-air episode gets a placeholder slug that is later replaced with the real
+  name — `…/1622613-episode-5/prehled/` → `…/1622613-pamet/prehled/`;
+- a film's working/English slug flips to the Czech title —
+  `…/1723354-the-miniature-wife/…` → `…/1723354-miniaturni-manzelka/…`.
+
+Because `url_id` (the loader's conflict key) carries the slug, the new URL is a
+**different key**, so the loader INSERTs a *second* row for the same `csfd_id`
+instead of updating — and the title then renders **twice** in the catalog/calendar.
+An `update` run surfaces this: discover re-harvests recent months, sees the new
+slug, and adds the duplicate.
+
+**Identity is `csfd_id`, not `url_id`.** Fixes, defence in depth:
+
+- **Cleanup:** `scripts/dedupe_titles.py` collapses rows sharing a `csfd_id` (keep
+  the richest — rated > unrated, more votes, has a date, real slug over a
+  placeholder, newest as tiebreak) and drops non-overview junk rows
+  (`/recenze/`, `?comment=` that were stored as titles). It also prunes the removed
+  URLs from the HTML cache and `cache/vod_urls.json` so a re-parse can't resurrect
+  them. Dry-run by default; `--apply` executes.
+- **Self-heal:** `csfd_vod.main update` runs that dedupe automatically after
+  parse/load, so the DB can't accumulate drift.
+- **Export guard:** `StreamfinderExporter._load_titles` dedupes by `csfd_id` and
+  filters non-overview URLs, so even a stray duplicate can never reach the site.
+- Display name comes from the `title` column, **not** the slug — so keeping either
+  row shows the correct name; the slug only affects the outbound ČSFD link.

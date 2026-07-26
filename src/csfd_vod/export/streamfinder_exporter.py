@@ -226,7 +226,53 @@ class StreamfinderExporter:
                 if d[k] is not None:
                     d[k] = d[k].isoformat()
             titles.append(d)
-        return titles
+        return self._dedupe(titles)
+
+    # A title page overview URL: /film/{id}[-slug]/[{id}[-slug]/]prehled/ , no query.
+    _OVERVIEW_RE = re.compile(r"^https://www\.csfd\.cz/film/\d+[^/?]*/(?:\d+[^/?]*/)?prehled/$")
+    # Pre-air placeholder episode slugs CSFD later renames (episode-5 → pamet).
+    _PLACEHOLDER_RE = re.compile(r"/\d+-(?:episode|epizoda)-\d+/prehled/$")
+
+    def _dedupe(self, titles: list[dict]) -> list[dict]:
+        """Collapse rows that denote the same ČSFD title, and drop non-title junk.
+
+        Two failure modes this guards against (both seen in the DB):
+          - **Slug drift** — ČSFD renames an episode/film slug over time
+            (episode-5 → pamet, the-miniature-wife → miniaturni-manzelka). Because
+            url_id carries the slug, the loader inserts a *second* row for the same
+            csfd_id, so the catalog/calendar shows the title twice.
+          - **Non-overview rows** — old data where a /recenze/ or ?comment= URL got
+            stored as a title.
+
+        csfd_id is ČSFD's stable identity, so rows sharing one are the same title:
+        keep the richest (rated > unrated, more votes, has a date, real slug over a
+        placeholder, newest as a tiebreak). This is a belt-and-suspenders net at the
+        export boundary — the DB is also cleaned and the loader collapses by csfd_id,
+        but nothing that reaches the site should ever render a title twice.
+        """
+        def rank(d: dict) -> tuple:
+            url = d["url_id"] or ""
+            return (
+                1 if d["rating"] is not None else 0,
+                d["votes_count"] or 0,
+                1 if d["vod_date"] else 0,
+                0 if self._PLACEHOLDER_RE.search(url) else 1,
+                d["title_id"] or 0,
+            )
+
+        best: dict = {}
+        passthrough: list[dict] = []
+        for d in titles:
+            url = d["url_id"] or ""
+            if not self._OVERVIEW_RE.match(url):
+                continue  # drop /recenze/, ?comment=, and other non-title rows
+            cid = d["csfd_id"]
+            if cid is None:
+                passthrough.append(d)  # no stable id → can't dedupe, keep as-is
+                continue
+            if cid not in best or rank(d) > rank(best[cid]):
+                best[cid] = d
+        return list(best.values()) + passthrough
 
     def _load_dim(self, session: Session, table: str, col: str) -> dict[int, list[str]]:
         result: dict[int, list[str]] = {}
