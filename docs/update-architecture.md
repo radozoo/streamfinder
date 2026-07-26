@@ -1,8 +1,14 @@
 # Update architecture — keeping the catalog fresh
 
-> Design/reference doc. **No code yet** — this is the agreed plan for how the
-> catalog gets refreshed over time. Companion to `csfd-scraping-rules.md`
-> (which covers the one-shot harvest) and the `csfd-scraping` skill.
+> Companion to `csfd-scraping-rules.md` (the one-shot harvest) and the
+> `csfd-scraping` skill.
+>
+> **Status:** the core is implemented as `python3 -m csfd_vod.main update`
+> (discover + refresh + parse + enrich + export, plus bad-page overwrite
+> protection in the loader). Still **deferred**: delisting reconciliation,
+> dedicated state columns, and DB-level evergreen freezing — see *Deferred* at
+> the end. The design below is the full picture; the "Orchestration" section
+> documents what the command actually does today.
 
 ## The core problem
 
@@ -119,15 +125,18 @@ These matter more than the scheduling itself:
 - **TMDB re-enrich only for what's missing** — never pull TMDB for everything each
   run; only new roots and titles lacking a poster/trailer.
 
-## New state we need to track
+## State signals
 
-Columns that don't exist yet but are prerequisites for any of the above:
+The refresh queue currently derives "hot" from existing columns — no new schema:
 
-- `first_seen_at` — when we first harvested the title
-- `last_scraped_at` — drives the manual-mode cadence rule
-- `scrape_count` — diagnostics
-- `rating_settled` (bool) — the hot→warm graduation flag
-- an evergreen flag (or derive it on the fly from `episode_count` / `cadence_days`)
+- `vod_date` — age tier (young ⇒ hot)
+- `rating IS NULL` — never got a rating yet ⇒ hot, prioritised first
+- `scraped_at` — staleness tiebreak (stalest re-scraped first), so successive
+  runs rotate through the queue
+
+Future refinement (deferred) would add dedicated columns for richer policy:
+`first_seen_at`, `last_scraped_at` (distinct from parse time), `scrape_count`,
+`rating_settled` (explicit hot→warm graduation), and an evergreen flag.
 
 ## Orchestration — manual / semi-manual (chosen)
 
@@ -137,21 +146,39 @@ GitHub Actions is fragile (CI IPs get blocked fast). Instead the whole thing is
 
 ```
 python3 -m csfd_vod.main update
-  ├─ discover   re-harvest last 2 months + running (non-evergreen) series
-  ├─ refresh    priority queue, budget N titles (hot/young first)
-  ├─ reconcile  mark delisted — ONLY if that month's harvest == complete
-  ├─ enrich     TMDB for new / missing only
-  └─ export     regenerate streamfinder/static/data/*.json
-                (then a human does the commit + push → GH Pages deploy)
+  ├─ discover   re-harvest the last N months (--discover-months, default 2) with a
+  │             FORCED refetch of those months, union new URLs into vod_urls.json,
+  │             download only the new title pages. New episodes of running series
+  │             show up here as new listing URLs — no per-series crawl needed.
+  ├─ refresh    budget-capped re-scrape of hot titles (--refresh-budget, default
+  │             200; --refresh-max-age-days, default 180). A re-scrape that comes
+  │             back as a challenge page (parses to no title) is REJECTED and the
+  │             good cached copy is kept.
+  ├─ parse      re-parse the whole cache → load (idempotent; loader COALESCEs
+  │             volatile fields so a bad page can never erase a good rating/poster)
+  ├─ enrich     TMDB for missing only  (--skip-enrich to skip)
+  └─ export     regenerate streamfinder/static/data/*.json  (--skip-export to skip)
+                → then a human runs the gate, commits, and pushes → GH Pages deploy
 ```
 
-No cron, no VPS, no brittle CI Playwright. The operator decides *when*, which fits
-the "on a train, intermittent net" workflow. This can be wrapped in a cron later
-without changing the logic — the manual `update` command is the unit either way.
+Flags: `--skip-discover`, `--skip-refresh`, `--skip-enrich`, `--skip-export`, and
+`--dry-run` (discover + refresh into cache only, no DB/enrich/export). The command
+**never commits or pushes** — the operator reviews and does that. It fits the
+"on a train, intermittent net" workflow; wrap it in cron later without logic change.
+
+## Deferred (not in the command yet)
+
+- **Delisting reconciliation.** Needs per-month URL snapshots + a `complete`-harvest
+  guard before it may delete anything (else the phantom paginator wipes the catalog).
+  Until then a title that leaves VOD lingers; re-add detection is manual.
+- **Dedicated state columns** (see *State signals*) for richer refresh policy.
+- **DB-level evergreen freezing.** Today soaps fall out of refresh naturally (old +
+  well-voted). An explicit frozen state (stop episode events, stop refresh) is a
+  frontend/export concern still to be wired.
 
 ## Verification (same gates as a harvest)
 
 - `python3 scripts/check_completeness.py` — canary titles + minimum work count must
-  hold; it gates the deploy.
+  hold; it gates the deploy. `update` prints a reminder to run it.
 - Any new gap found becomes a new canary — executable knowledge doesn't rot.
 - `cd streamfinder && npm run check && npm run build`.

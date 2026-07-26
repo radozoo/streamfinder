@@ -162,7 +162,13 @@ class VODScraper:
         logger.info("scrape_month_page_complete", year=year, month=month, page=page, count=len(urls), method="requests")
         return urls, html
 
-    def scrape_vod_all_urls(self, from_year: int = 2015, list_html_dir: Optional[Path] = None) -> List[str]:
+    def scrape_vod_all_urls(
+        self,
+        from_year: int = 2015,
+        list_html_dir: Optional[Path] = None,
+        from_month: int = 1,
+        refetch_from: Optional[Tuple[int, int]] = None,
+    ) -> List[str]:
         """
         Collect all VOD title URLs by iterating every month from from_year to today.
 
@@ -173,7 +179,16 @@ class VODScraper:
             from_year: First year to include (default 2015)
             list_html_dir: Optional directory to save raw list page HTML files.
                 Files are named {year}_{month:02d}_p{page:02d}.html.
-                Existing files are skipped (resumable).
+                Existing files are reused (resumable) unless `refetch_from` forces
+                a fresh fetch for that month.
+            from_month: First month of `from_year` to include (default 1). Lets the
+                `update` discover step iterate only the last few months.
+            refetch_from: Optional (year, month). Months at or after this point are
+                re-fetched from the network even if a cached list page exists, and
+                the cached page is overwritten. This is how discover picks up NEW
+                releases (and new episodes of running series): the back-catalogue
+                stays cached, only the recent window is refreshed. Months before it
+                are still served from cache when present.
 
         Returns:
             Sorted list of unique film URLs.
@@ -187,7 +202,7 @@ class VODScraper:
         if list_html_dir is not None:
             list_html_dir.mkdir(parents=True, exist_ok=True)
 
-        year, month = from_year, 1
+        year, month = from_year, from_month
         while (year, month) <= (today.year, today.month):
             page = 1
             prev_page_urls: set = set()
@@ -202,7 +217,10 @@ class VODScraper:
                     list_html_dir / f"{year}_{month:02d}_p{page:02d}.html"
                     if list_html_dir is not None else None
                 )
-                if page_path is not None and page_path.exists():
+                # Force a fresh fetch for months in the refetch window, so discover
+                # sees releases that appeared since the page was last cached.
+                stale = refetch_from is not None and (year, month) >= refetch_from
+                if page_path is not None and page_path.exists() and not stale:
                     html = page_path.read_text(encoding="utf-8")
                     urls = self._extract_title_urls(html)
                 else:

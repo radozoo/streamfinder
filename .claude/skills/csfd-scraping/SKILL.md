@@ -13,6 +13,7 @@ scrape     python3 -m csfd_vod.main scrape                     # download title 
 parse      python3 -m csfd_vod.main parse                      # parse ALL cached HTML → Postgres (idempotent)
 enrich     python3 -m csfd_vod.main enrich                     # TMDB posters/trailers (needs TMDB_API_KEY)
 streamfinder  python3 -m csfd_vod.main streamfinder            # export streamfinder/static/data/*.json
+update     python3 -m csfd_vod.main update                     # incremental refresh (see below)
 ```
 
 DB is `postgresql:///csfd_vod`. `.env` holds `TMDB_API_KEY` and is gitignored —
@@ -59,13 +60,19 @@ Full detail + code pointers in **`docs/csfd-scraping-rules.md`**. The short list
 ## Keeping the catalog fresh over time
 
 Re-scraping the whole catalog on a schedule is not viable (bot protection + cost).
-The agreed design splits "update" into three streams — **discover** (cheap re-harvest
-of the last ~2 months), **refresh** (budget-capped re-scrape of young/hot titles,
-tiered by age), and **running series** (except evergreen soaps like Ružová zahrada,
-which get frozen). Runs **manually** as one `update` command; a human commits + pushes.
-Watch for **delisting** (reconcile only on a `complete` harvest) and **bad-page
-overwrites** (never replace a good rating with null). Full design + the state columns
-it needs: **`docs/update-architecture.md`**. Not implemented yet — it's the plan.
+`python3 -m csfd_vod.main update` does an incremental refresh: **discover** (forced
+re-harvest of the last N months → union new URLs → download only the new pages;
+catches new releases *and* new episodes of running series), **refresh** (budget-capped
+re-scrape of hot titles — young or still unrated — via `select_refresh_urls`), then
+parse → enrich (missing only) → export. Flags: `--discover-months`, `--refresh-budget`,
+`--refresh-max-age-days`, `--skip-*`, `--dry-run`. It **never commits/pushes** — a human
+runs `check_completeness.py` and does that. Two safety properties baked in:
+**bad-page overwrite protection** (loader COALESCEs volatile fields, and refresh
+rejects a challenge page that parses to no title — a bad page can only ADD, never
+erase a good rating/poster) and evergreen soaps fall out of refresh naturally
+(old + well-voted). **Deferred:** delisting reconciliation (needs a `complete`
+harvest + per-month URL snapshots), dedicated state columns, DB-level evergreen
+freezing. Full design: **`docs/update-architecture.md`**.
 
 ## When something is missing from the catalog
 
