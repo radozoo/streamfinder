@@ -216,12 +216,16 @@
 			hit: countryBase.some((t) => t.countries.includes(c.name))
 		}))
 	);
-	let availableTags = $derived(
-		data.dimensions.tags.slice(0, 50).map((tag) => ({
+	// Tags: the most frequent ones as a browsable pill cloud (with availability),
+	// plus the full list for free search (2000+ tags — a top-N slice can't be
+	// searched, so search must see them all).
+	let popularTags = $derived(
+		data.dimensions.tags.slice(0, 40).map((tag) => ({
 			...tag,
 			hit: tagBase.some((t) => t.tags.includes(tag.name))
 		}))
 	);
+	let allTags = $derived(data.dimensions.tags);
 
 	let typeOptions = $derived(
 		['film', 'seriál', 'tv film', 'pořad', 'krátký film'].filter((type) =>
@@ -383,7 +387,8 @@
 			genres={availableGenres}
 			platforms={availablePlatforms}
 			countries={availableCountries}
-			tags={availableTags}
+			tags={allTags}
+			tagsTop={popularTags}
 			{typeOptions}
 			{crewItems}
 			{crewLoading}
@@ -522,7 +527,9 @@
 				<div class="filter-group">
 					<h3 class="filter-label">Tagy</h3>
 					<AutocompleteDropdown
-						items={availableTags}
+						items={allTags}
+						topItems={popularTags}
+						topLabel="Nejčastější tagy"
 						selected={selectedTags}
 						onSelect={(name) => (selectedTags = toggle(selectedTags, name))}
 						onRemove={(name) => (selectedTags = toggle(selectedTags, name))}

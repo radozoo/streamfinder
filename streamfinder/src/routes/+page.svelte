@@ -1,9 +1,14 @@
 <script lang="ts">
 	import type { PageData } from './$types';
+	import type { TitleIndex } from '$lib/types';
 	import { base } from '$app/paths';
 	import PosterCard from '$lib/components/PosterCard.svelte';
+	import { platformColor } from '$lib/platforms';
 
 	let { data }: { data: PageData } = $props();
+
+	// Platforms surfaced in the "Podle platformy" section (in priority order).
+	const PLATFORMS = ['Netflix', 'Disney+', 'HBO Max', 'Max', 'Prime Video', 'Apple TV+'];
 
 	function formatDate(iso: string) {
 		const d = new Date(iso);
@@ -66,6 +71,7 @@
 						<img src={f.poster} alt={f.title} loading={i === 0 ? 'eager' : 'lazy'} />
 					</a>
 					<div class="hero-info">
+						<span class="kicker">Výběr redakce{#if f.genres.length} · {f.genres[0]}{/if}</span>
 						<div class="hero-badges">
 							{#each f.platforms.slice(0, 2) as p}
 								<span class="vod-badge">{p}</span>
@@ -128,20 +134,23 @@
 		{/if}
 	</section>
 
-	{#if data.recentDates.length > 0}
-		<div class="recent-strip page-container">
-			<span class="recent-strip-label">Nedávno přibylo</span>
-			<div class="recent-strip-dates">
-				{#each data.recentDates as [date, count]}
-					<a href="{base}/kalendar" class="recent-chip">
-						<span class="recent-chip-date">{formatDate(date)}</span>
-						<span class="recent-chip-count">{count}</span>
-					</a>
+	<!-- Search strip — visible, not dominant -->
+	<div class="search-strip">
+		<div class="page-container search-strip-inner">
+			<form class="home-search" action="{base}/katalog" method="GET">
+				<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
+				<input name="q" type="search" placeholder="Co chcete vidět? Film, seriál, herec…" aria-label="Hledat" />
+			</form>
+			<div class="home-chips">
+				{#each ['Dokumentární', 'Thriller', 'Komedie', 'Drama'] as g}
+					<a class="home-chip" href="{base}/katalog?genre={encodeURIComponent(g)}">{g}</a>
+				{/each}
+				{#each ['Netflix', 'Disney+', 'HBO Max'] as p}
+					<a class="home-chip home-chip--brand" style="background:{platformColor(p)}" href="{base}/katalog?platform={encodeURIComponent(p)}">{p}</a>
 				{/each}
 			</div>
-			<a href="{base}/kalendar" class="recent-strip-cta">Celý kalendář →</a>
 		</div>
-	{/if}
+	</div>
 {:else}
 	<section class="hero hero--empty">
 		<div class="hero-empty">
@@ -150,39 +159,53 @@
 	</section>
 {/if}
 
-<!-- New this week -->
-{#if data.newThisWeek.length > 0}
-<section class="home-section page-container">
-	<h2 class="section-title">Nové na VOD tento týden</h2>
-	<div class="scroll-row">
-		{#each data.newThisWeek as title}
-			<PosterCard {title} />
-		{/each}
-	</div>
-</section>
-{/if}
+<!-- Curated editorial rails -->
+{#snippet rail(kicker: string, title: string, items: TitleIndex[], href: string, hrefLabel: string)}
+	{#if items.length > 0}
+		<section class="home-section page-container">
+			<div class="rail-head">
+				<div>
+					<span class="kicker">{kicker}</span>
+					<h2 class="rail-title">{title}</h2>
+				</div>
+				<a class="rail-all" {href}>{hrefLabel}</a>
+			</div>
+			<div class="scroll-row">
+				{#each items as t (t.id)}
+					<PosterCard title={t} />
+				{/each}
+			</div>
+		</section>
+	{/if}
+{/snippet}
 
-<!-- Best this month -->
-{#if data.bestThisMonth.length > 0}
-<section class="home-section page-container">
-	<h2 class="section-title">Nejlépe hodnocené tento měsíc</h2>
-	<div class="scroll-row">
-		{#each data.bestThisMonth as title}
-			<PosterCard {title} />
-		{/each}
-	</div>
-</section>
-{/if}
+{@render rail('Posledních 7 dní', 'Právě přibylo', data.justAdded, `${base}/kalendar`, 'Celý kalendář →')}
+{@render rail('Výběr redakce', 'Nejlíp hodnocené tento měsíc', data.bestThisMonth, `${base}/katalog?sort=rating`, 'Zobrazit vše →')}
+{@render rail('Nové epizody každý týden', 'Seriály, co právě běží', data.runningSerials, `${base}/katalog?type=${encodeURIComponent('seriál')}`, 'Zobrazit vše →')}
+{@render rail('80 %+ a málo vidění', 'Skryté klenoty', data.hiddenGems, `${base}/katalog?sort=rating`, 'Zobrazit vše →')}
 
-<!-- Browse by genre -->
+<!-- Podle platformy -->
 <section class="home-section page-container">
-	<h2 class="section-title">Procházej podle žánru</h2>
-	<div class="genre-tiles">
-		{#each data.dimensions.genres.slice(0, 16) as g}
-			<a href="{base}/katalog?genre={encodeURIComponent(g.name)}" class="genre-tile">
-				<span class="genre-name">{g.name}</span>
-				<span class="genre-count">{g.count}</span>
-			</a>
+	<div class="rail-head">
+		<div>
+			<span class="kicker">Kde právě přibývá</span>
+			<h2 class="rail-title">Podle platformy</h2>
+		</div>
+	</div>
+	<div class="plat-grid">
+		{#each PLATFORMS as p}
+			{@const dim = data.dimensions.platforms.find((x) => x.name === p)}
+			{#if dim}
+				<a
+					class="plat-tile"
+					href="{base}/katalog?platform={encodeURIComponent(p)}"
+					style="background:linear-gradient(160deg, {platformColor(p)}22, var(--navy-700))"
+				>
+					<span class="plat-glow" style="background:{platformColor(p)}"></span>
+					<span class="plat-name">{p}</span>
+					<span class="plat-count">{dim.count.toLocaleString('cs-CZ')} titulů →</span>
+				</a>
+			{/if}
 		{/each}
 	</div>
 </section>
@@ -461,64 +484,187 @@
 		}
 	}
 
-	/* Recent-arrivals strip below the hero */
-	.recent-strip {
-		display: flex;
+	/* Editorial kicker / eyebrow — states the curation rule */
+	.kicker {
+		display: inline-flex;
 		align-items: center;
+		gap: 0.6rem;
+		font-size: 0.7rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.16em;
+		color: var(--amber);
+	}
+
+	.kicker::before {
+		content: '';
+		width: 26px;
+		height: 1px;
+		background: var(--amber);
+		opacity: 0.7;
+	}
+
+	.hero-info .kicker {
+		margin-bottom: 0.9rem;
+	}
+
+	/* Rail heading */
+	.rail-head {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
 		gap: 1rem;
-		padding-top: 1rem;
-		padding-bottom: 1rem;
-		flex-wrap: wrap;
+		margin-bottom: 1.25rem;
+	}
+
+	.rail-title {
+		font-family: 'Playfair Display', Georgia, serif;
+		font-weight: 700;
+		font-size: clamp(1.4rem, 3vw, 1.85rem);
+		letter-spacing: -0.01em;
+		color: var(--text-primary);
+		margin: 0.4rem 0 0;
+	}
+
+	.rail-all {
+		font-size: 0.85rem;
+		color: var(--amber);
+		white-space: nowrap;
+	}
+
+	.rail-all:hover {
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
+
+	/* Search strip — visible, not dominant */
+	.search-strip {
+		background: var(--navy-800);
 		border-bottom: 1px solid var(--border);
 	}
 
-	.recent-strip-label {
-		font-size: 0.72rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: var(--text-muted);
-		white-space: nowrap;
-	}
-
-	.recent-strip-dates {
+	.search-strip-inner {
 		display: flex;
-		gap: 0.5rem;
+		align-items: center;
+		gap: 1.2rem;
+		padding-top: 1.1rem;
+		padding-bottom: 1.1rem;
 		flex-wrap: wrap;
-		flex: 1;
 	}
 
-	.recent-chip {
-		display: inline-flex;
-		align-items: baseline;
-		gap: 0.4rem;
-		padding: 0.3rem 0.7rem;
+	.home-search {
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		flex: 1 1 340px;
+		min-width: 240px;
+		padding: 0.65rem 1rem;
 		background: var(--navy-700);
 		border: 1px solid var(--border);
 		border-radius: 999px;
-		font-size: 0.8rem;
-		transition: border-color 0.2s, background 0.2s;
+		color: var(--text-muted);
 	}
 
-	.recent-chip:hover {
+	.home-search:focus-within {
 		border-color: var(--amber);
-		background: var(--navy-600);
 	}
 
-	.recent-chip-date {
+	.home-search input {
+		flex: 1;
+		min-width: 0;
+		background: none;
+		border: none;
+		outline: none;
+		color: var(--text-primary);
+		font-size: 0.95rem;
+		font-family: inherit;
+	}
+
+	.home-search input::placeholder {
+		color: var(--text-secondary);
+	}
+
+	.home-chips {
+		display: flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.home-chip {
+		padding: 0.4rem 0.9rem;
+		border-radius: 999px;
+		background: var(--navy-700);
+		border: 1px solid var(--border);
+		font-size: 0.82rem;
+		color: var(--text-secondary);
+		transition: border-color 0.15s, color 0.15s;
+	}
+
+	.home-chip:hover {
+		border-color: var(--amber);
 		color: var(--text-primary);
 	}
 
-	.recent-chip-count {
-		color: var(--text-muted);
-		font-size: 0.72rem;
-		font-variant-numeric: tabular-nums;
+	.home-chip--brand {
+		color: #fff;
+		border: none;
+		font-weight: 600;
 	}
 
-	.recent-strip-cta {
+	.home-chip--brand:hover {
+		color: #fff;
+		opacity: 0.88;
+	}
+
+	/* Podle platformy */
+	.plat-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+		gap: 1rem;
+	}
+
+	.plat-tile {
+		position: relative;
+		overflow: hidden;
+		padding: 1.3rem 1.2rem;
+		border-radius: 12px;
+		border: 1px solid var(--border);
+		min-height: 116px;
+		display: flex;
+		flex-direction: column;
+		justify-content: space-between;
+		transition: transform 0.2s, border-color 0.2s;
+	}
+
+	.plat-tile:hover {
+		transform: translateY(-4px);
+		border-color: rgba(255, 255, 255, 0.16);
+	}
+
+	.plat-glow {
+		position: absolute;
+		width: 160px;
+		height: 160px;
+		right: -40px;
+		top: -50px;
+		border-radius: 50%;
+		filter: blur(30px);
+		opacity: 0.5;
+	}
+
+	.plat-name {
+		position: relative;
+		font-family: 'Playfair Display', Georgia, serif;
+		font-weight: 700;
+		font-size: 1.2rem;
+		color: var(--text-primary);
+	}
+
+	.plat-count {
+		position: relative;
 		font-size: 0.8rem;
-		color: var(--amber);
-		white-space: nowrap;
+		color: var(--text-secondary);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.hero-empty {
@@ -534,43 +680,6 @@
 			animation: none;
 			transform: scaleX(1);
 		}
-	}
-
-	/* Genre tiles */
-	.genre-tiles {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-		gap: 0.75rem;
-	}
-
-	.genre-tile {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.3rem;
-		padding: 1rem 0.75rem;
-		background: var(--navy-700);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		cursor: pointer;
-		transition: all 0.2s;
-		text-align: center;
-	}
-
-	.genre-tile:hover {
-		background: var(--navy-600);
-		border-color: var(--amber);
-	}
-
-	.genre-name {
-		font-size: 0.9rem;
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.genre-count {
-		font-size: 0.72rem;
-		color: var(--text-muted);
 	}
 
 	/* Stats teaser */
@@ -646,9 +755,6 @@
 			background: linear-gradient(0deg, rgba(6, 11, 25, 0.94), rgba(6, 11, 25, 0.5));
 		}
 		.hero-nav {
-			display: none;
-		}
-		.recent-strip-cta {
 			display: none;
 		}
 		.home-stats {

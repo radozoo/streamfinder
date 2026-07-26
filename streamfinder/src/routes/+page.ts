@@ -10,7 +10,6 @@ export const load: PageLoad = async ({ parent }) => {
 		return d.toISOString().slice(0, 10);
 	};
 
-	const thisMonthStart = today.toISOString().slice(0, 7) + '-01';
 	const todayStr = today.toISOString().slice(0, 10);
 
 	// Featured carousel: the 4–5 most interesting recent works. A hero slide needs an
@@ -59,36 +58,54 @@ export const load: PageLoad = async ({ parent }) => {
 
 	const featuredList = pickFeatured(FEATURED_COUNT);
 
-	// New this week (past 7 days)
-	const weekCutoff = daysAgo(7);
-	const newThisWeek = titles
-		.filter((t) => t.vod_date && t.vod_date >= weekCutoff)
-		.sort((a, b) => (b.vod_date ?? '') > (a.vod_date ?? '') ? 1 : -1)
-		.slice(0, 20);
+	// ── Curated editorial rails ──────────────────────────────────────────────
+	const isWork = (t: (typeof titles)[number]) => t.is_toplevel !== false;
+	// A work's most recent VOD activity — its own release, or a serial's last
+	// episode — so a running show with a fresh episode counts as "recent".
+	const recencyDate = (t: (typeof titles)[number]) => {
+		const own = t.vod_date ?? '';
+		const last = t.last_vod_date ?? '';
+		return own > last ? own : last;
+	};
 
-	// Recent arrivals grouped by date (past 14 days)
-	const twoWeekCutoff = daysAgo(14);
-	const recentByDate = new Map<string, number>();
-	titles
-		.filter((t) => t.vod_date && t.vod_date >= twoWeekCutoff)
-		.forEach((t) => {
-			const d = t.vod_date!;
-			recentByDate.set(d, (recentByDate.get(d) ?? 0) + 1);
-		});
-	const recentDates = [...recentByDate.entries()]
-		.sort(([a], [b]) => b.localeCompare(a))
-		.slice(0, 7);
+	// Právě přibylo — most recently active works (past ~10 days)
+	const addedCut = daysAgo(10);
+	const justAdded = titles
+		.filter((t) => isWork(t) && recencyDate(t) >= addedCut && recencyDate(t) <= todayStr)
+		.sort((a, b) => recencyDate(b).localeCompare(recencyDate(a)))
+		.slice(0, 18);
 
-	// Best rated this month
-	const bestThisMonth = titles
+	// Nejlíp hodnocené tento měsíc — quality first, but needs a few votes to be
+	// real; relax the vote bar if too few titles clear it.
+	const monthCut = daysAgo(35);
+	const ratedRecent = titles.filter(
+		(t) => isWork(t) && t.vod_date && t.vod_date >= monthCut && (t.rating ?? 0) > 0
+	);
+	let bestThisMonth = ratedRecent
+		.filter((t) => (t.votes_count ?? 0) >= 50)
+		.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+		.slice(0, 18);
+	if (bestThisMonth.length < 8) {
+		bestThisMonth = ratedRecent.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0)).slice(0, 18);
+	}
+
+	// Seriály, co právě běží
+	const runningSerials = titles
+		.filter((t) => isWork(t) && t.is_running)
+		.sort((a, b) => recencyDate(b).localeCompare(recencyDate(a)))
+		.slice(0, 18);
+
+	// Skryté klenoty — highly rated, but few people have seen them
+	const hiddenGems = titles
 		.filter(
 			(t) =>
-				t.vod_date &&
-				t.vod_date >= thisMonthStart &&
-				t.rating !== null
+				isWork(t) &&
+				(t.rating ?? 0) >= 82 &&
+				(t.votes_count ?? 0) >= 30 &&
+				(t.votes_count ?? 0) <= 800
 		)
 		.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
-		.slice(0, 20);
+		.slice(0, 18);
 
 	// Stats
 	const stats = {
@@ -102,5 +119,5 @@ export const load: PageLoad = async ({ parent }) => {
 		),
 	};
 
-	return { featuredList, newThisWeek, bestThisMonth, recentDates, stats, dimensions };
+	return { featuredList, justAdded, bestThisMonth, runningSerials, hiddenGems, stats, dimensions };
 };

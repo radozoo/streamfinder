@@ -1,4 +1,6 @@
 <script lang="ts">
+	import PillGrid from './PillGrid.svelte';
+
 	let {
 		items,
 		selected = [],
@@ -6,7 +8,9 @@
 		onRemove,
 		placeholder = 'Hledat…',
 		formatItem,
-		loading = false
+		loading = false,
+		topItems,
+		topLabel = 'Nejčastější'
 	}: {
 		items: { name: string; role?: string; count?: number }[];
 		selected: string[];
@@ -15,6 +19,10 @@
 		placeholder?: string;
 		formatItem?: (item: { name: string; role?: string; count?: number }) => string;
 		loading?: boolean;
+		// When provided, these are shown as a toggle pill cloud while the search box
+		// is empty — a browsable set of the most common options next to free search.
+		topItems?: { name: string; count?: number; hit?: boolean }[];
+		topLabel?: string;
 	} = $props();
 
 	let query = $state('');
@@ -41,6 +49,11 @@
 		if (formatItem) return formatItem(item);
 		return item.name;
 	}
+
+	function togglePill(name: string) {
+		if (selected.includes(name)) onRemove(name);
+		else onSelect(name);
+	}
 </script>
 
 <div class="autocomplete">
@@ -64,15 +77,24 @@
 
 	{#if loading}
 		<div class="autocomplete-loading">Načítání…</div>
-	{:else if debounced.trim() && results.length === 0}
-		<div class="autocomplete-empty">Žádné výsledky</div>
-	{:else if results.length > 0}
-		<div class="autocomplete-results">
-			{#each results as item}
-				<button class="autocomplete-item" onclick={() => { onSelect(item.name); query = ''; debounced = ''; }}>
-					{format(item)}
-				</button>
-			{/each}
+	{:else if debounced.trim()}
+		{#if results.length > 0}
+			<div class="autocomplete-results">
+				{#each results as item}
+					<button class="autocomplete-item" onclick={() => { onSelect(item.name); query = ''; debounced = ''; }}>
+						{format(item)}
+					</button>
+				{/each}
+			</div>
+		{:else}
+			<div class="autocomplete-empty">Žádné výsledky</div>
+		{/if}
+	{:else if topItems && topItems.length > 0}
+		<div class="autocomplete-top">
+			<div class="autocomplete-top-label">{topLabel}</div>
+			<div class="autocomplete-top-cloud">
+				<PillGrid items={topItems} {selected} onToggle={togglePill} />
+			</div>
 		</div>
 	{/if}
 </div>
@@ -163,5 +185,24 @@
 		font-size: 0.78rem;
 		padding: 0.5rem;
 		text-align: center;
+	}
+
+	.autocomplete-top {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+
+	.autocomplete-top-label {
+		font-size: 0.65rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.07em;
+		color: var(--text-muted);
+	}
+
+	.autocomplete-top-cloud {
+		max-height: 220px;
+		overflow-y: auto;
 	}
 </style>

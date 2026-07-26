@@ -392,6 +392,133 @@ def cmd_enrich(args) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Command: update — incremental refresh (discover + refresh + enrich + export)
+# ---------------------------------------------------------------------------
+
+def _months_back(n: int) -> tuple:
+    """Return (year, month) n months before the current month."""
+    from datetime import date
+    today = date.today()
+    idx = today.year * 12 + (today.month - 1) - n
+    return idx // 12, idx % 12 + 1
+
+
+def cmd_update(args) -> dict:
+    """Incremental catalog refresh — the manually-run 'keep it fresh' command.
+
+    Three streams (see docs/update-architecture.md):
+      discover  re-harvest the last N months (forced fresh) → union into
+                vod_urls.json → download only the new title pages. Picks up new
+                releases and new episodes of running series.
+      refresh   re-scrape a budget-capped set of 'hot' titles (young / unrated)
+                so their rating and vote count mature. A re-scrape that comes back
+                as a bot-protection challenge (parses to no title) is rejected and
+                the good cached page is kept — never overwritten with junk.
+      parse+load → enrich (missing only) → export the Streamfinder JSON.
+
+    Deliberately does NOT commit or push — a human reviews and does that. Also
+    does NOT reconcile delistings yet (that needs a complete harvest and per-month
+    URL snapshots; see the design doc). Deploy gate stays scripts/check_completeness.py.
+    """
+    run_id = str(uuid.uuid4())
+    config = load_config_from_env()
+    selectors = load_selectors(config.selectors_path)
+    scraper = _make_scraper(config, selectors)
+    cache = HTMLCache(config.cache_dir)
+    summary: dict = {"success": True, "run_id": run_id, "steps": {}}
+    logger.info("cmd_update_start", run_id=run_id, discover_months=args.discover_months,
+                refresh_budget=args.refresh_budget)
+
+    # ── 1. discover ─────────────────────────────────────────────────────────
+    if not args.skip_discover:
+        cut_y, cut_m = _months_back(args.discover_months)
+        list_html_dir = Path(config.cache_dir) / "vod_lists"
+        recent = scraper.scrape_vod_all_urls(
+            from_year=cut_y, from_month=cut_m,
+            list_html_dir=list_html_dir, refetch_from=(cut_y, cut_m),
+        )
+        incomplete = getattr(scraper, "incomplete_months", [])
+        if incomplete:
+            logger.error("update_discover_incomplete", run_id=run_id, incomplete_months=incomplete)
+
+        # Union new URLs into the master list (never shrink it — old months stay).
+        vod_urls_path = Path(config.cache_dir) / "vod_urls.json"
+        existing = json.loads(vod_urls_path.read_text(encoding="utf-8")) if vod_urls_path.exists() else []
+        merged = sorted(set(existing) | set(recent))
+        new_urls = sorted(set(recent) - set(existing))
+        vod_urls_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        # Download only pages we don't already have cached.
+        downloaded = 0
+        for url in recent:
+            if cache.has(url):
+                continue
+            html = scraper.scrape_title_details(url)
+            if html:
+                cache.save(url, html)
+                downloaded += 1
+            else:
+                logger.warning("update_discover_download_failed", url=url)
+        summary["steps"]["discover"] = {
+            "recent_urls": len(recent), "new_in_master": len(new_urls),
+            "downloaded": downloaded, "complete": not incomplete,
+            "incomplete_months": incomplete,
+        }
+        logger.info("cmd_update_discover_complete", run_id=run_id, **summary["steps"]["discover"])
+
+    # ── 2. refresh ──────────────────────────────────────────────────────────
+    if not args.skip_refresh:
+        loader = PostgresLoader(config.database.connection_string)
+        try:
+            hot = loader.select_refresh_urls(args.refresh_max_age_days, args.refresh_budget)
+        finally:
+            loader.close()
+        parser = VODTitleParser(selectors=selectors)
+        refreshed, rejected = 0, 0
+        for i, url in enumerate(hot):
+            if i % 25 == 0:
+                logger.info("update_refresh_progress", run_id=run_id, count=i, total=len(hot))
+            html = scraper.scrape_title_details(url)
+            # Reject a challenge/blocked page: it has no title header, so the parser
+            # returns None. Keep the existing good cache rather than overwriting it.
+            if html and parser.parse(html, url) is not None:
+                cache.save(url, html)
+                refreshed += 1
+            else:
+                rejected += 1
+                logger.warning("update_refresh_rejected", url=url)
+        summary["steps"]["refresh"] = {"selected": len(hot), "refreshed": refreshed, "rejected": rejected}
+        logger.info("cmd_update_refresh_complete", run_id=run_id, **summary["steps"]["refresh"])
+
+    # ── 3. parse + load (whole cache; idempotent, COALESCE-protected) ─────────
+    if args.dry_run:
+        logger.info("cmd_update_dry_run", run_id=run_id, summary=summary)
+        summary["dry_run"] = True
+        return summary
+    parse_res = cmd_parse(argparse.Namespace(dry_run=False))
+    summary["steps"]["parse"] = parse_res
+    if not parse_res.get("success"):
+        summary["success"] = False
+        return summary
+
+    # ── 4. enrich (missing only) ──────────────────────────────────────────────
+    if not args.skip_enrich:
+        summary["steps"]["enrich"] = cmd_enrich(argparse.Namespace(limit=None, force=False))
+
+    # ── 5. export Streamfinder JSON ───────────────────────────────────────────
+    if not args.skip_export:
+        summary["steps"]["export"] = cmd_streamfinder(
+            argparse.Namespace(output_dir="streamfinder/static/data")
+        )
+
+    logger.info("cmd_update_complete", run_id=run_id, summary=summary)
+    logger.info("cmd_update_next_step",
+                hint="run `python3 scripts/check_completeness.py` as the deploy gate, "
+                     "then review + commit + push the regenerated JSON")
+    return summary
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -439,6 +566,22 @@ def main():
     p_enrich.add_argument("--limit", type=int, default=None, help="Max titles to process (default: all pending)")
     p_enrich.add_argument("--force", action="store_true", help="Re-enrich already enriched titles")
 
+    # -- update --
+    p_update = subparsers.add_parser(
+        "update", help="Incremental refresh: discover new + refresh hot titles + enrich + export")
+    p_update.add_argument("--discover-months", type=int, default=2,
+                          help="How many recent months to re-harvest for new releases (default: 2)")
+    p_update.add_argument("--refresh-budget", type=int, default=200,
+                          help="Max title pages to re-scrape for maturing ratings (default: 200)")
+    p_update.add_argument("--refresh-max-age-days", type=int, default=180,
+                          help="A title is 'hot' if on VOD within this many days, or still unrated (default: 180)")
+    p_update.add_argument("--skip-discover", action="store_true", help="Skip the discover step")
+    p_update.add_argument("--skip-refresh", action="store_true", help="Skip the refresh step")
+    p_update.add_argument("--skip-enrich", action="store_true", help="Skip TMDB enrichment")
+    p_update.add_argument("--skip-export", action="store_true", help="Skip the Streamfinder JSON export")
+    p_update.add_argument("--dry-run", action="store_true",
+                          help="Discover + refresh into cache, but don't parse/load/enrich/export")
+
     args = parser.parse_args()
     setup_logging(args.log_level)
 
@@ -456,6 +599,8 @@ def main():
         result = cmd_streamfinder(args)
     elif args.command == "enrich":
         result = cmd_enrich(args)
+    elif args.command == "update":
+        result = cmd_update(args)
 
     if result.get("success"):
         logger.info("command_success", command=args.command, result=result)

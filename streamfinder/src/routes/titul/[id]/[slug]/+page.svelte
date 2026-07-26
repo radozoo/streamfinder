@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
 	import { base } from '$app/paths';
+	import { platformSearchUrl } from '$lib/platforms';
 
 	let { data }: { data: PageData } = $props();
 	let t = $derived(data.title);
@@ -113,8 +114,9 @@
 			{#if t.vods.length}
 				<div class="vod-actions">
 					{#each t.vods as vod}
-						{#if vod.url}
-							<a class="vod-btn" href={vod.url} target="_blank" rel="noopener noreferrer">
+						{@const href = vod.url ?? platformSearchUrl(vod.platform, t.title_en || t.title)}
+						{#if href}
+							<a class="vod-btn" {href} target="_blank" rel="noopener noreferrer">
 								▶ Sledovat na {vod.platform}
 							</a>
 						{:else}

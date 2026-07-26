@@ -11,6 +11,7 @@
 		platforms,
 		countries,
 		tags,
+		tagsTop = undefined,
 		typeOptions,
 		// Crew (lazy-loaded)
 		crewItems = [],
@@ -46,7 +47,8 @@
 		genres: { name: string; count: number; hit: boolean }[];
 		platforms: { name: string; count: number; hit: boolean }[];
 		countries: { name: string; count: number; hit: boolean }[];
-		tags: { name: string; count: number; hit: boolean }[];
+		tags: { name: string; count: number }[];
+		tagsTop?: { name: string; count: number; hit: boolean }[];
 		typeOptions: string[];
 		crewItems?: CrewEntry[];
 		crewLoading?: boolean;
@@ -137,6 +139,8 @@
 	<FilterDropdown label="Tagy" activeCount={selectedTags.length}>
 		<AutocompleteDropdown
 			items={tags}
+			topItems={tagsTop}
+			topLabel="Nejčastější tagy"
 			selected={selectedTags}
 			onSelect={onToggleTag}
 			onRemove={onToggleTag}

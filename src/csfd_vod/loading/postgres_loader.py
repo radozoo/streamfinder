@@ -163,20 +163,27 @@ class PostgresLoader:
                 DO UPDATE SET
                     title = EXCLUDED.title,
                     year = EXCLUDED.year,
-                    title_en = EXCLUDED.title_en,
-                    plot = EXCLUDED.plot,
-                    rating = EXCLUDED.rating,
-                    image_url = EXCLUDED.image_url,
+                    -- Volatile/enriched fields are COALESCEd, never blindly
+                    -- overwritten: a re-scrape that hits a bot-protection challenge
+                    -- or a partially-rendered page parses these to NULL, and a bare
+                    -- `= EXCLUDED.x` would then wipe a good rating/plot/poster with
+                    -- that NULL. COALESCE keeps the existing value whenever the fresh
+                    -- parse has nothing — so a bad page can only ever ADD, never erase.
+                    -- (A fully-blocked page has no title and never reaches here.)
+                    title_en = COALESCE(EXCLUDED.title_en, csfd_vod.fact_titles.title_en),
+                    plot = COALESCE(EXCLUDED.plot, csfd_vod.fact_titles.plot),
+                    rating = COALESCE(EXCLUDED.rating, csfd_vod.fact_titles.rating),
+                    image_url = COALESCE(EXCLUDED.image_url, csfd_vod.fact_titles.image_url),
                     title_type = EXCLUDED.title_type,
                     parent_url = EXCLUDED.parent_url,
                     vod_date = COALESCE(EXCLUDED.vod_date, csfd_vod.fact_titles.vod_date),
                     distributor = COALESCE(EXCLUDED.distributor, csfd_vod.fact_titles.distributor),
-                    premiere_detail = EXCLUDED.premiere_detail,
+                    premiere_detail = COALESCE(EXCLUDED.premiere_detail, csfd_vod.fact_titles.premiere_detail),
                     scraped_at = EXCLUDED.scraped_at,
-                    runtime_min = EXCLUDED.runtime_min,
-                    votes_count = EXCLUDED.votes_count,
-                    trailer_url = EXCLUDED.trailer_url,
-                    age_rating = EXCLUDED.age_rating,
+                    runtime_min = COALESCE(EXCLUDED.runtime_min, csfd_vod.fact_titles.runtime_min),
+                    votes_count = COALESCE(EXCLUDED.votes_count, csfd_vod.fact_titles.votes_count),
+                    trailer_url = COALESCE(EXCLUDED.trailer_url, csfd_vod.fact_titles.trailer_url),
+                    age_rating = COALESCE(EXCLUDED.age_rating, csfd_vod.fact_titles.age_rating),
                     csfd_id = EXCLUDED.csfd_id,
                     root_id = EXCLUDED.root_id,
                     season_no = EXCLUDED.season_no,
@@ -401,6 +408,34 @@ class PostgresLoader:
         except Exception as e:
             logger.error("dimension_upsert_failed", title_id=title_id, error=str(e))
             raise
+
+    def select_refresh_urls(self, max_age_days: int, limit: int) -> List[str]:
+        """URLs of 'hot' titles due for a rating/votes refresh.
+
+        A title is hot while its rating is still maturing: either recently on VOD
+        (`vod_date` within `max_age_days`) or still unrated. We prioritise unrated
+        titles, then the youngest, then the stalest last scrape — and cap at `limit`
+        so a run's Playwright budget is bounded no matter how big the catalogue is.
+        Successive runs rotate through the queue via the `scraped_at ASC` tiebreak.
+
+        Evergreen soaps (Ružová zahrada & co.) fall out on their own: they are old
+        and well-voted, so they match neither the recency nor the unrated clause.
+        """
+        sql = text(
+            """
+            SELECT url_id FROM csfd_vod.fact_titles
+            WHERE vod_date IS NOT NULL
+              AND (vod_date >= CURRENT_DATE - (:max_age * INTERVAL '1 day')
+                   OR rating IS NULL)
+            ORDER BY (rating IS NULL) DESC,
+                     vod_date DESC,
+                     scraped_at ASC NULLS FIRST
+            LIMIT :limit
+            """
+        )
+        with self.engine.connect() as conn:
+            rows = conn.execute(sql, {"max_age": max_age_days, "limit": limit}).fetchall()
+        return [r[0] for r in rows]
 
     def _record_failed_title(
         self, session: Session, title: VODTitle, error: str, run_id: str

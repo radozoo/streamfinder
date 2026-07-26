@@ -188,9 +188,15 @@ class VODTitleParser:
                 data["votes_count"] = int(votes_match.group(1))
 
         # --- Tags — .box-tags a ---
+        # Skip the "více" (show-more) toggle link that lives inside .box-tags — it
+        # is not a tag (it was being stored as one on ~660 titles).
         tag_elems = soup.select(".box-tags a")
         if tag_elems:
-            tags = ", ".join(t.get_text(strip=True) for t in tag_elems if t.get_text(strip=True))
+            tags = ", ".join(
+                text
+                for t in tag_elems
+                if (text := t.get_text(strip=True)) and text.lower() not in ("více", "more")
+            )
             if tags:
                 data["tags"] = tags
 
