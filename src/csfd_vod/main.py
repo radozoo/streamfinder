@@ -95,6 +95,67 @@ def cmd_harvest(args) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Command: harvest-platforms — recover undated catalog titles per VOD platform
+# ---------------------------------------------------------------------------
+
+def cmd_harvest_platforms(args) -> dict:
+    """Harvest each platform's /vod/{slug}/ browse listing.
+
+    The monthly harvest (cmd_harvest) only sees titles with a DATED VOD arrival.
+    Older catalog titles that are streamable but never got a dated event (e.g.
+    Dexter, Game of Thrones) are invisible to it. This complementary source lists
+    everything CURRENTLY on a platform, dated or not, using the same real (clamped,
+    non-phantom) pagination as the monthly listing — verified empirically.
+
+    Unions newly found URLs into the master vod_urls.json (never removes existing
+    entries) so a later `scrape`/`parse` picks them up. Run `parse` + `streamfinder`
+    + scripts/check_completeness.py afterwards, same as after any harvest.
+    """
+    run_id = str(uuid.uuid4())
+    platforms = args.platforms.split(",") if args.platforms else VODScraper.MAJOR_VOD_PLATFORMS
+    logger.info("cmd_harvest_platforms_start", run_id=run_id, platforms=platforms)
+
+    config = load_config_from_env()
+    selectors = load_selectors(config.selectors_path)
+    scraper = _make_scraper(config, selectors)
+    list_html_dir = Path(config.cache_dir) / "vod_lists"
+
+    per_platform = {}
+    all_urls: set = set()
+    for slug in platforms:
+        urls = scraper.scrape_vod_platform_all_urls(slug, list_html_dir=list_html_dir)
+        per_platform[slug] = len(urls)
+        all_urls.update(urls)
+        logger.info("cmd_harvest_platforms_progress", run_id=run_id, platform=slug, count=len(urls))
+
+    incomplete = getattr(scraper, "incomplete_platforms", [])
+    complete = not incomplete
+    if not complete:
+        logger.error("cmd_harvest_platforms_incomplete", run_id=run_id, incomplete_platforms=incomplete)
+
+    vod_urls_path = Path(config.cache_dir) / "vod_urls.json"
+    existing = json.loads(vod_urls_path.read_text(encoding="utf-8")) if vod_urls_path.exists() else []
+    new_urls = sorted(all_urls - set(existing))
+    merged = sorted(set(existing) | all_urls)
+    vod_urls_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    logger.info(
+        "cmd_harvest_platforms_complete",
+        run_id=run_id, per_platform=per_platform, new_urls=len(new_urls),
+        master_total=len(merged), complete=complete,
+    )
+    return {
+        "success": True,
+        "run_id": run_id,
+        "per_platform": per_platform,
+        "new_urls": len(new_urls),
+        "master_total": len(merged),
+        "complete": complete,
+        "incomplete_platforms": incomplete,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Command: scrape — download HTML to cache
 # ---------------------------------------------------------------------------
 
@@ -554,6 +615,13 @@ def main():
     p_harvest = subparsers.add_parser("harvest", help="Collect all VOD title URLs by iterating months")
     p_harvest.add_argument("--from-year", type=int, default=2015, help="Start year for month iteration (default: 2015)")
 
+    # -- harvest-platforms --
+    p_hp = subparsers.add_parser(
+        "harvest-platforms",
+        help="Collect VOD title URLs from per-platform browse listings (recovers undated catalog titles)")
+    p_hp.add_argument("--platforms", default=None,
+                       help="Comma-separated platform slugs (default: the 8 major platforms)")
+
     # -- scrape --
     p_scrape = subparsers.add_parser("scrape", help="Download HTML pages to cache (no parsing)")
     p_scrape.add_argument("--url", default=None, help="Override VOD listing URL")
@@ -603,6 +671,8 @@ def main():
 
     if args.command == "harvest":
         result = cmd_harvest(args)
+    elif args.command == "harvest-platforms":
+        result = cmd_harvest_platforms(args)
     elif args.command == "scrape":
         result = cmd_scrape(args)
     elif args.command == "parse":

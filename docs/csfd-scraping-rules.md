@@ -22,6 +22,33 @@ get an **"Access Denied"** page (a sad Anubis mascot), not the content.
 - Do **not** try `WebFetch`/`curl` on csfd.cz — they will silently return the block
   page. Use the scraper. (`WebSearch` against csfd.cz is fine for finding a URL.)
 
+## 1b. Two harvest sources — dated feed vs. per-platform catalog
+
+The monthly `/vod/?year=&month=` listing (§2) is a **dated feed**: it only surfaces
+a title's *arrival* event, so a title that's on VOD but never had one — an older
+catalog title with no dated "on VOD since" entry — is invisible to it. Confirmed
+missing this way: **Dexter** (2006, root 224291, Prime Video/SkyShowtime) and
+**Game of Thrones** ("Hra o trůny", root 263138, HBO Max/Prime/Lepší.TV) — both
+rated, both genuinely on VOD, both absent from every monthly page we ever fetched.
+
+`harvest-platforms` (`cmd_harvest_platforms` / `scrape_vod_platform_all_urls`)
+covers this: each platform has a static browse listing at `/vod/{slug}/` (slugs:
+`netflix`, `hbo-max`, `disney-plus`, `prime-video`, `sky-showtime`, `apple-tv`,
+`oneplay`, `prima-plus`, plus ~18 smaller ones incl. several `youtube-*` and niche
+services — `VODScraper.MAJOR_VOD_PLATFORMS` covers the 8 major ones) that lists
+everything CURRENTLY available, dated or not. **Important distinction from the
+base `/vod/` browse and its query-string facets (`?type=`, etc.):** those do NOT
+clamp — paging past the end just keeps returning different content, so they can't
+be harvested exhaustively or safely bounded. The per-platform PATH listing
+(`/vod/{slug}/`) DOES clamp exactly like the monthly feed — verified empirically:
+`/vod/netflix/?page=328` and `?page=329` both return the identical 16 items as
+`?page=327`, which is also the paginator's own declared last page. So the same
+real-vs-phantom pagination logic applies, and `incomplete_platforms` is the
+per-platform analogue of `incomplete_months`.
+
+Run `harvest-platforms` after (or alongside) a monthly `harvest` to catch this
+class of gap; it unions into the same `vod_urls.json`, never removing entries.
+
 ## 2. Harvesting the /vod listing
 
 Listing URL: `https://www.csfd.cz/vod/?year={y}&month={m}&range=month&page={p}`

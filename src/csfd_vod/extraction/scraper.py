@@ -162,6 +162,106 @@ class VODScraper:
         logger.info("scrape_month_page_complete", year=year, month=month, page=page, count=len(urls), method="requests")
         return urls, html
 
+    # Slug for each platform's static browse listing at /vod/{slug}/ — a
+    # complementary source to the dated monthly feed (see scrape_vod_all_urls'
+    # docstring). This lists everything CURRENTLY on a platform regardless of
+    # when it arrived, which recovers older catalog titles that never had a dated
+    # VOD arrival (e.g. Dexter, Game of Thrones) and are therefore invisible to
+    # the monthly harvest. Confirmed empirically to use the same real (non-phantom)
+    # pagination as the monthly listing: /vod/netflix/?page=328 == ?page=327 ==
+    # the paginator's own declared last page — i.e. CSFD clamps here too.
+    MAJOR_VOD_PLATFORMS = [
+        "netflix", "hbo-max", "disney-plus", "prime-video",
+        "sky-showtime", "apple-tv", "oneplay", "prima-plus",
+    ]
+
+    def scrape_vod_platform_page(self, platform_slug: str, page: int = 1) -> Tuple[List[str], str]:
+        """Scrape film URLs from a single page of a platform's /vod/{slug}/ listing."""
+        url = f"https://www.csfd.cz/vod/{platform_slug}/?page={page}"
+        self.rate_limiter.wait()
+        logger.info("scrape_platform_page_start", platform=platform_slug, page=page)
+
+        if PLAYWRIGHT_AVAILABLE:
+            try:
+                urls, html = self._scrape_vod_list_playwright(url)
+                logger.info("scrape_platform_page_complete", platform=platform_slug, page=page, count=len(urls))
+                return urls, html
+            except Exception as e:
+                logger.warning("playwright_platform_page_failed", platform=platform_slug, page=page, error=str(e))
+
+        urls, html = self._scrape_vod_list_requests(url)
+        logger.info("scrape_platform_page_complete", platform=platform_slug, page=page, count=len(urls), method="requests")
+        return urls, html
+
+    def scrape_vod_platform_all_urls(
+        self, platform_slug: str, list_html_dir: Optional[Path] = None
+    ) -> List[str]:
+        """Collect all title URLs from one platform's /vod/{slug}/ browse listing.
+
+        Same termination rule as scrape_vod_all_urls: the true end is a page whose
+        items repeat the previous page (CSFD clamps out-of-range pages there too),
+        never "no new URLs" alone. Populates self.incomplete_platforms with any
+        platform that hit the safety cap or emptied out after real content — the
+        same kind of guard as the monthly harvest's incomplete_months.
+        """
+        seen: set = set()
+        if not hasattr(self, "incomplete_platforms"):
+            self.incomplete_platforms: List[dict] = []
+
+        if list_html_dir is not None:
+            list_html_dir.mkdir(parents=True, exist_ok=True)
+
+        page = 1
+        prev_page_urls: set = set()
+        last_nonempty = 0
+        reason = None
+        while True:
+            page_path = (
+                list_html_dir / f"platform_{platform_slug}_p{page:03d}.html"
+                if list_html_dir is not None else None
+            )
+            if page_path is not None and page_path.exists():
+                html = page_path.read_text(encoding="utf-8")
+                urls = self._extract_title_urls(html)
+            else:
+                urls, html = self.scrape_vod_platform_page(platform_slug, page)
+                if page_path is not None:
+                    page_path.write_text(html, encoding="utf-8")
+                    logger.info("platform_page_cached", path=str(page_path))
+
+            overview_urls = [u for u in urls if self._is_title_overview_url(u)]
+            page_url_set = set(overview_urls)
+            if page_url_set == prev_page_urls and prev_page_urls:
+                reason = "clamp"
+                break
+            if not page_url_set:
+                reason = "empty"
+                break
+            last_nonempty = page
+            seen.update(u for u in overview_urls if u not in seen)
+            prev_page_urls = page_url_set
+            page += 1
+            if page > 1000:  # safety cap — largest observed platform (apple-tv) was ~553
+                logger.warning("platform_harvest_page_cap_reached", platform=platform_slug)
+                reason = "cap"
+                break
+
+        suspect = reason == "cap" or (reason == "empty" and last_nonempty == 0)
+        if suspect:
+            logger.error(
+                "harvest_platform_incomplete",
+                platform=platform_slug, pages_fetched=last_nonempty, reason=reason,
+            )
+            self.incomplete_platforms.append({
+                "platform": platform_slug, "pages_fetched": last_nonempty, "reason": reason,
+            })
+
+        logger.info(
+            "harvest_platform_complete",
+            platform=platform_slug, pages_fetched=last_nonempty, reason=reason, total_unique=len(seen),
+        )
+        return sorted(seen)
+
     def scrape_vod_all_urls(
         self,
         from_year: int = 2015,

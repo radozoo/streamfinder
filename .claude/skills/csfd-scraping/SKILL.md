@@ -9,6 +9,7 @@ Stages (run from repo root, interpreter is `python3`):
 
 ```
 harvest    python3 -m csfd_vod.main harvest --from-year 2015   # collect /vod URLs → cache/vod_urls.json
+harvest-platforms  python3 -m csfd_vod.main harvest-platforms  # + undated catalog titles (see below)
 scrape     python3 -m csfd_vod.main scrape                     # download title pages → cache/html/
 parse      python3 -m csfd_vod.main parse                      # parse ALL cached HTML → Postgres (idempotent)
 enrich     python3 -m csfd_vod.main enrich                     # TMDB posters/trailers (needs TMDB_API_KEY)
@@ -54,6 +55,12 @@ Full detail + code pointers in **`docs/csfd-scraping-rules.md`**. The short list
   alone lets stale values survive a re-parse.
 - **Not everything that looks like junk is junk:** `"Director X"` is a real director.
   Verify against the scraped page before deleting suspicious-looking data.
+- **Two harvest sources.** The monthly `/vod/?year=&month=` feed only sees a
+  title's dated VOD *arrival* — an old catalog title with no dated event (Dexter,
+  Game of Thrones) is invisible to it. `harvest-platforms` covers this via each
+  platform's `/vod/{slug}/` browse listing, which DOES clamp like the monthly feed
+  (unlike the base `/vod/` browse or its query facets, which never terminate —
+  don't try to harvest those exhaustively). See rules doc §1b.
 - **Hierarchy:** `root_id` = first `/film/{id}` segment, `csfd_id` = last;
   `is_toplevel = root_id == csfd_id`. Katalóg = works, Kalendár = release events.
 - **Slug drift → duplicates.** ČSFD renames slugs over time (`…-episode-5/` →
