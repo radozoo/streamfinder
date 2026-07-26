@@ -24,8 +24,8 @@ DB is `postgresql:///csfd_vod`. `.env` holds `TMDB_API_KEY` and is gitignored �
 
 1. **Frontend:** `cd streamfinder && npm run check && npm run build` (0 errors).
 2. **Catalog canary:** `python3 scripts/check_completeness.py` — known-VOD titles
-   (True Detective, Twin Peaks, …) + a minimum work count must pass. It exits
-   non-zero; treat that as a deploy gate.
+   (True Detective, Twin Peaks, …) + a minimum work count + **no duplicate titles**
+   (the slug-drift guard) must pass. It exits non-zero; treat that as a deploy gate.
 3. **After a harvest:** check the returned `complete` / `incomplete_months`.
 4. **Found a new gap?** Add a canary to `check_completeness.py` and a rule to
    `docs/csfd-scraping-rules.md`, so the same hole can't reopen unnoticed.
