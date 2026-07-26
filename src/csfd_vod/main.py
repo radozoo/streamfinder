@@ -1,6 +1,7 @@
 """Main pipeline orchestration."""
 
 import json
+import re
 import uuid
 import argparse
 from pathlib import Path
@@ -185,18 +186,25 @@ def cmd_scrape(args) -> dict:
         logger.error("stage_scrape_failed", run_id=run_id, reason="no_titles_found")
         return {"success": False, "run_id": run_id, "stage": "scrape"}
 
-    # Stage 2: download HTML → cache
+    # Stage 2: download HTML → cache. Uncached URLs are prioritised top-level-first
+    # (a work's own root page — the catalog-visible unit) over child episodes/seasons,
+    # then bounded by --limit so a large backlog (e.g. a catalog sweep's new URLs)
+    # can be worked off in resumable batches rather than one huge run. Skipping
+    # already-cached URLs makes repeated runs pick up exactly where the last left off.
+    _CHILD_RE = re.compile(r'^https://www\.csfd\.cz/film/\d+[^/]*/\d+[^/]*/prehled/$')
+    to_fetch = [u for u in title_urls if not cache.has(u)]
+    already_cached = len(title_urls) - len(to_fetch)
+    to_fetch.sort(key=lambda u: bool(_CHILD_RE.match(u)))  # top-level (False) sorts first
+    limit = getattr(args, "limit", None)
+    batch = to_fetch[:limit] if limit else to_fetch
+    remaining_after = max(0, len(to_fetch) - len(batch))
+
     saved = 0
-    skipped = 0
+    skipped = already_cached
 
-    for i, url in enumerate(title_urls):
+    for i, url in enumerate(batch):
         if i % 10 == 0:
-            logger.info("stage_download_progress", run_id=run_id, count=i, total=len(title_urls))
-
-        if cache.has(url):
-            logger.info("cache_hit", url=url)
-            skipped += 1
-            continue
+            logger.info("stage_download_progress", run_id=run_id, count=i, total=len(batch))
 
         html = scraper.scrape_title_details(url)
         if html:
@@ -205,8 +213,14 @@ def cmd_scrape(args) -> dict:
         else:
             logger.warning("download_failed", url=url)
 
-    logger.info("cmd_scrape_complete", run_id=run_id, saved=saved, skipped=skipped, total=len(title_urls))
-    return {"success": True, "run_id": run_id, "saved": saved, "skipped": skipped, "total": len(title_urls)}
+    logger.info(
+        "cmd_scrape_complete", run_id=run_id, saved=saved, skipped=skipped,
+        total=len(title_urls), remaining_after=remaining_after,
+    )
+    return {
+        "success": True, "run_id": run_id, "saved": saved, "skipped": skipped,
+        "total": len(title_urls), "remaining_after": remaining_after,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -625,6 +639,9 @@ def main():
     # -- scrape --
     p_scrape = subparsers.add_parser("scrape", help="Download HTML pages to cache (no parsing)")
     p_scrape.add_argument("--url", default=None, help="Override VOD listing URL")
+    p_scrape.add_argument("--limit", type=int, default=None,
+                           help="Max NEW (uncached) pages to fetch this run, top-level works "
+                                "prioritised over episodes/seasons (default: no limit)")
 
     # -- parse --
     p_parse = subparsers.add_parser("parse", help="Parse cached HTML and load to database")
