@@ -56,6 +56,17 @@ Full detail + code pointers in **`docs/csfd-scraping-rules.md`**. The short list
 - **Hierarchy:** `root_id` = first `/film/{id}` segment, `csfd_id` = last;
   `is_toplevel = root_id == csfd_id`. Katalóg = works, Kalendár = release events.
 
+## Keeping the catalog fresh over time
+
+Re-scraping the whole catalog on a schedule is not viable (bot protection + cost).
+The agreed design splits "update" into three streams — **discover** (cheap re-harvest
+of the last ~2 months), **refresh** (budget-capped re-scrape of young/hot titles,
+tiered by age), and **running series** (except evergreen soaps like Ružová zahrada,
+which get frozen). Runs **manually** as one `update` command; a human commits + pushes.
+Watch for **delisting** (reconcile only on a `complete` harvest) and **bad-page
+overwrites** (never replace a good rating with null). Full design + the state columns
+it needs: **`docs/update-architecture.md`**. Not implemented yet — it's the plan.
+
 ## When something is missing from the catalog
 
 1. Confirm it's on VOD: `WebSearch` for the csfd.cz film URL, then scrape the page
