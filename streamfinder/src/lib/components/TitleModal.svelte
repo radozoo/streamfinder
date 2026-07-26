@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { TitleDetail, EpisodeRelease } from '$lib/types';
+	import { platformSearchUrl } from '$lib/platforms';
 
 	interface Props {
 		title: TitleDetail | null;
@@ -201,8 +202,9 @@
 							{#if title.vods.length}
 								<div class="modal-vods">
 									{#each title.vods as vod}
-										{#if vod.url}
-											<a class="vod-btn" href={vod.url} target="_blank" rel="noopener noreferrer">
+										{@const href = vod.url ?? platformSearchUrl(vod.platform, title.title_en || title.title)}
+										{#if href}
+											<a class="vod-btn" {href} target="_blank" rel="noopener noreferrer">
 												▶ {vod.platform}
 											</a>
 										{:else}
