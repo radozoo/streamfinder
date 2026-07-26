@@ -139,23 +139,47 @@
 		return map;
 	});
 
-	// Full filter predicate — identical facets to Katalog.
-	function passesFilters(t: TitleIndex): boolean {
-		const q = fold(searchQuery.trim());
-		if (q && !fold(t.title).includes(q) && !fold(t.title_en ?? '').includes(q)) return false;
-		if (selectedGenres.length && !selectedGenres.some((g) => t.genres.includes(g))) return false;
-		if (selectedPlatforms.length && !selectedPlatforms.some((p) => t.platforms.includes(p))) return false;
-		if (selectedCountries.length && !selectedCountries.some((c) => t.countries.includes(c))) return false;
-		if (selectedTags.length && !selectedTags.some((tag) => t.tags.includes(tag))) return false;
-		if (selectedType && t.title_type !== selectedType) return false;
-		if (yearFrom > YEAR_MIN && (t.year ?? 0) < yearFrom) return false;
-		if (yearTo < YEAR_MAX && (t.year ?? 9999) > yearTo) return false;
-		if (ratingMin > 0 && (t.rating ?? 0) < ratingMin) return false;
-		if (selectedCrew.length && crewIdToName) {
-			const names = (t.crew_ids ?? []).map((id) => crewIdToName!.get(id)).filter(Boolean);
-			if (!selectedCrew.some((name) => names.includes(name))) return false;
+	// Faceted filter predicate — identical to Katalog. `skip` names one dimension to
+	// ignore, so each facet's available options are computed against every OTHER
+	// filter but not its own selection → OR within a dimension, AND across.
+	let filterConfig = $derived.by(() => ({
+		q: fold(searchQuery.trim()),
+		genres: selectedGenres,
+		platforms: selectedPlatforms,
+		countries: selectedCountries,
+		tags: selectedTags,
+		type: selectedType,
+		yearFrom,
+		yearTo,
+		ratingMin,
+		crew: selectedCrew,
+		crewNames: crewIdToName
+	}));
+
+	function passes(t: TitleIndex, f: typeof filterConfig, skip: string): boolean {
+		if (skip !== 'q' && f.q && !fold(t.title).includes(f.q) && !fold(t.title_en ?? '').includes(f.q))
+			return false;
+		if (skip !== 'genre' && f.genres.length && !f.genres.some((g) => t.genres.includes(g)))
+			return false;
+		if (skip !== 'platform' && f.platforms.length && !f.platforms.some((p) => t.platforms.includes(p)))
+			return false;
+		if (skip !== 'country' && f.countries.length && !f.countries.some((c) => t.countries.includes(c)))
+			return false;
+		if (skip !== 'tag' && f.tags.length && !f.tags.some((tag) => t.tags.includes(tag)))
+			return false;
+		if (skip !== 'type' && f.type && t.title_type !== f.type) return false;
+		if (skip !== 'year' && f.yearFrom > YEAR_MIN && (t.year ?? 0) < f.yearFrom) return false;
+		if (skip !== 'year' && f.yearTo < YEAR_MAX && (t.year ?? 9999) > f.yearTo) return false;
+		if (skip !== 'rating' && f.ratingMin > 0 && (t.rating ?? 0) < f.ratingMin) return false;
+		if (skip !== 'crew' && f.crew.length && f.crewNames) {
+			const names = (t.crew_ids ?? []).map((id) => f.crewNames!.get(id)).filter(Boolean);
+			if (!f.crew.some((name) => names.includes(name))) return false;
 		}
 		return true;
+	}
+
+	function passesFilters(t: TitleIndex): boolean {
+		return passes(t, filterConfig, '');
 	}
 
 	// Filter + order within a day: group by type
@@ -215,18 +239,27 @@
 	// Flat filtered set (calendar titles) drives the pill availability indicators.
 	let filteredTitles = $derived(data.titles.filter((t) => t.vod_date && passesFilters(t)));
 
+	// Facet availability: each computed against every filter EXCEPT its own
+	// dimension (over calendar titles), so a picked value never greys out its
+	// siblings — OR within a dimension, matching Katalog.
+	let genreBase = $derived.by(() => data.titles.filter((t) => t.vod_date && passes(t, filterConfig, 'genre')));
+	let platformBase = $derived.by(() => data.titles.filter((t) => t.vod_date && passes(t, filterConfig, 'platform')));
+	let countryBase = $derived.by(() => data.titles.filter((t) => t.vod_date && passes(t, filterConfig, 'country')));
+	let tagBase = $derived.by(() => data.titles.filter((t) => t.vod_date && passes(t, filterConfig, 'tag')));
+
 	let availableGenres = $derived(
-		data.dimensions.genres.map((g) => ({ ...g, hit: filteredTitles.some((t) => t.genres.includes(g.name)) }))
+		data.dimensions.genres.map((g) => ({ ...g, hit: genreBase.some((t) => t.genres.includes(g.name)) }))
 	);
 	let availablePlatforms = $derived(
-		data.dimensions.platforms.map((p) => ({ ...p, hit: filteredTitles.some((t) => t.platforms.includes(p.name)) }))
+		data.dimensions.platforms.map((p) => ({ ...p, hit: platformBase.some((t) => t.platforms.includes(p.name)) }))
 	);
 	let availableCountries = $derived(
-		data.dimensions.countries.slice(0, 30).map((c) => ({ ...c, hit: filteredTitles.some((t) => t.countries.includes(c.name)) }))
+		data.dimensions.countries.slice(0, 30).map((c) => ({ ...c, hit: countryBase.some((t) => t.countries.includes(c.name)) }))
 	);
-	let availableTags = $derived(
-		data.dimensions.tags.slice(0, 50).map((tag) => ({ ...tag, hit: filteredTitles.some((t) => t.tags.includes(tag.name)) }))
+	let popularTags = $derived(
+		data.dimensions.tags.slice(0, 40).map((tag) => ({ ...tag, hit: tagBase.some((t) => t.tags.includes(tag.name)) }))
 	);
+	let allTags = $derived(data.dimensions.tags);
 
 	let typeOptions = $derived(
 		['film', 'seriál', 'tv film', 'pořad', 'krátký film'].filter((type) =>
@@ -378,7 +411,8 @@
 			genres={availableGenres}
 			platforms={availablePlatforms}
 			countries={availableCountries}
-			tags={availableTags}
+			tags={allTags}
+			tagsTop={popularTags}
 			{typeOptions}
 			{crewItems}
 			{crewLoading}
