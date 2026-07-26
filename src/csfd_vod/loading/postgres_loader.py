@@ -227,9 +227,30 @@ class PostgresLoader:
             logger.error("fact_title_upsert_failed", url_id=title.url_id, error=str(e))
             raise
 
+    # Page-derived dimensions fully rebuilt from each parse (see below).
+    _REBUILT_DIMS = (
+        "dim_genres", "dim_directors", "dim_actors", "dim_countries",
+        "dim_vods", "dim_tags", "dim_screenwriters",
+        "dim_cinematographers", "dim_composers",
+    )
+
     def _upsert_dimensions(self, session: Session, title_id: int, title: VODTitle):
-        """Upsert dimension tables (genres, directors, actors, countries, vods)."""
+        """Rebuild a title's page-derived dimension rows from the current parse.
+
+        These dimensions are cleared first, then re-inserted. Without the clear the
+        inserts only ever ADD (ON CONFLICT DO NOTHING), so stale values from an
+        earlier or incorrect parse would survive forever — e.g. seed placeholders
+        ("Actor 1", "Director 1") or platforms no longer listed on the page. The
+        delete + re-insert runs in the same transaction as the fact upsert, so it
+        is atomic per title.
+        """
         try:
+            for tbl in self._REBUILT_DIMS:
+                session.execute(
+                    text(f"DELETE FROM csfd_vod.{tbl} WHERE title_id = :title_id"),
+                    {"title_id": title_id},
+                )
+
             # Genres
             if title.genres:
                 for genre in title.genres.split(" / "):

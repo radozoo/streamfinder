@@ -153,6 +153,7 @@ class VODScraper:
         year, month = from_year, 1
         while (year, month) <= (today.year, today.month):
             page = 1
+            prev_page_urls: set = set()
             while True:
                 urls, html = self.scrape_vod_month_page(year, month, page)
                 if list_html_dir is not None:
@@ -161,11 +162,23 @@ class VODScraper:
                         page_path.write_text(html, encoding="utf-8")
                         logger.info("list_page_cached", path=str(page_path))
                 overview_urls = [u for u in urls if self._is_title_overview_url(u)]
+                page_url_set = set(overview_urls)
+                # Stop only at the REAL end of the month: a page with no title links,
+                # or one identical to the previous page (CSFD clamps out-of-range
+                # pages to the last one). Do NOT stop merely because a page had no
+                # *new* URLs — `seen` is global across months, so a single mid-month
+                # page of already-seen re-releases must not truncate the rest of the
+                # month. That premature break dropped ~12k episode URLs of ongoing
+                # series (e.g. every part of True Detective).
+                if not page_url_set or page_url_set == prev_page_urls:
+                    break
                 new_urls = [u for u in overview_urls if u not in seen]
                 seen.update(new_urls)
-                if not new_urls:
-                    break  # no new URLs on this page (empty or all duplicates) → done with this month
+                prev_page_urls = page_url_set
                 page += 1
+                if page > 500:  # safety cap against a non-terminating listing
+                    logger.warning("harvest_page_cap_reached", year=year, month=month)
+                    break
 
             logger.info("harvest_month_complete", year=year, month=month, total_unique=len(seen))
 

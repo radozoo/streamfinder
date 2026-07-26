@@ -206,13 +206,16 @@ class VODTitleParser:
                 else:
                     data["image_url"] = f"https://www.csfd.cz{src}"
 
-        # --- VOD Platforms + URLs — .film-vod-list a ---
-        vod_links = soup.select(".film-vod-list a")
+        # --- VOD Platforms + URLs — service links only ---
+        # Scope to the services container: `.film-vod-list a` also matches the
+        # section's <h3><a href="/vod/">VOD</a> heading link and the "více" toggle,
+        # which are not platforms. The real services live in .box-film-vod-services.
+        vod_links = soup.select(".film-vod-list .box-film-vod-services a")
         platforms = []
         vod_url_map = {}
         for a in vod_links:
             name = a.get_text(strip=True)
-            if name.lower() in ("více", ""):
+            if name.lower() in ("více", "vod", ""):
                 continue
             platforms.append(name)
             href = a.get("href", "")
