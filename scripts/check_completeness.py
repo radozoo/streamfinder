@@ -35,6 +35,7 @@ CANARIES = {
     1000137: "Yellowjackets",
     930640: "Neporazitelný",
     1361414: "Čmuchalové",
+    224291: "Dexter (2006) — Prime Video / SkyShowtime (undated catalog title)",
 }
 
 # A complete catalog is in the thousands of works; a tiny number means the export
