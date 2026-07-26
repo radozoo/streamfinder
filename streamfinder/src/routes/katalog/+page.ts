@@ -21,6 +21,10 @@ export const load: PageLoad = async ({ parent, url }) => {
 	// crew uses repeated params (?crew=A&crew=B) to handle names with commas
 	const crewParams = url.searchParams.getAll('crew').filter(Boolean);
 
+	// "Přidáno na VOD" window in days; only accept the known presets
+	const validRecency = [7, 30, 90, 180, 365, 730, 1095];
+	const recencyParam = parseNum(get('added'));
+
 	return {
 		titles,
 		dimensions,
@@ -35,5 +39,6 @@ export const load: PageLoad = async ({ parent, url }) => {
 		initialRatingMin: parseNum(get('ratingMin')),
 		initialSort: (validSorts.includes(sortParam as SortKey) ? sortParam : 'vod_date') as SortKey,
 		initialCrew: crewParams,
+		initialRecency: recencyParam && validRecency.includes(recencyParam) ? recencyParam : 0,
 	};
 };

@@ -32,7 +32,39 @@
 	let yearFrom = $state<number>(snap.initialYearFrom ?? YEAR_MIN);
 	let yearTo = $state<number>(snap.initialYearTo ?? YEAR_MAX);
 	let ratingMin = $state<number>(snap.initialRatingMin ?? 0);
+	let recencyDays = $state<number>(snap.initialRecency ?? 0);
 	let sortBy = $state<'rating' | 'year' | 'vod_date' | 'votes'>(snap.initialSort ?? 'vod_date');
+
+	// ── "Přidáno na VOD" recency presets ─────────────────────────────────────
+	// Mutually exclusive windows → single-select. A work passes if its most recent
+	// VOD activity is within the window; for serials that's the last episode date
+	// (last_vod_date), so a running show with a fresh episode qualifies.
+	const RECENCY_OPTIONS: { label: string; days: number }[] = [
+		{ label: 'Vše', days: 0 },
+		{ label: '7 dní', days: 7 },
+		{ label: '30 dní', days: 30 },
+		{ label: '3 měsíce', days: 90 },
+		{ label: '6 měsíců', days: 180 },
+		{ label: 'Rok', days: 365 },
+		{ label: '2 roky', days: 730 },
+		{ label: '3 roky', days: 1095 }
+	];
+
+	function recencyDate(t: TitleIndex): string {
+		const own = t.vod_date ?? '';
+		const last = t.last_vod_date ?? '';
+		return own > last ? own : last; // ISO strings compare lexicographically
+	}
+
+	function cutoffISO(days: number): string {
+		const d = new Date();
+		d.setDate(d.getDate() - days);
+		return d.toISOString().slice(0, 10);
+	}
+
+	function recencyLabel(days: number): string {
+		return RECENCY_OPTIONS.find((o) => o.days === days)?.label ?? '';
+	}
 
 	// ── Pagination ───────────────────────────────────────────────────────────
 	let page = $state(1);
@@ -68,34 +100,59 @@
 		ensureCrewLoaded();
 	}
 
+	// ── Shared filter predicate ───────────────────────────────────────────────
+	// `skip` names one dimension to ignore. The result grid uses skip='' (apply
+	// everything); each facet computes its available options with its OWN dimension
+	// skipped, so picking one platform doesn't grey out the rest — multi-select
+	// within a dimension is OR, while different dimensions combine as AND.
+	let filterConfig = $derived.by(() => ({
+		q: fold(searchQuery.trim()),
+		recencyCutoff: recencyDays > 0 ? cutoffISO(recencyDays) : '',
+		genres: selectedGenres,
+		platforms: selectedPlatforms,
+		countries: selectedCountries,
+		tags: selectedTags,
+		type: selectedType,
+		yearFrom,
+		yearTo,
+		ratingMin,
+		crew: selectedCrew,
+		crewNames: crewIdToName
+	}));
+
+	function passes(t: TitleIndex, f: typeof filterConfig, skip: string): boolean {
+		// Katalóg shows works only — episodes/seasons roll up under their serial.
+		if (t.is_toplevel === false) return false;
+		if (skip !== 'q' && f.q && !fold(t.title).includes(f.q) && !fold(t.title_en ?? '').includes(f.q))
+			return false;
+		if (skip !== 'recency' && f.recencyCutoff) {
+			const rec = recencyDate(t);
+			if (!rec || rec < f.recencyCutoff) return false;
+		}
+		if (skip !== 'genre' && f.genres.length && !f.genres.some((g) => t.genres.includes(g)))
+			return false;
+		if (skip !== 'platform' && f.platforms.length && !f.platforms.some((p) => t.platforms.includes(p)))
+			return false;
+		if (skip !== 'country' && f.countries.length && !f.countries.some((c) => t.countries.includes(c)))
+			return false;
+		if (skip !== 'tag' && f.tags.length && !f.tags.some((tag) => t.tags.includes(tag)))
+			return false;
+		if (skip !== 'type' && f.type && t.title_type !== f.type) return false;
+		if (skip !== 'year' && f.yearFrom > YEAR_MIN && (t.year ?? 0) < f.yearFrom) return false;
+		if (skip !== 'year' && f.yearTo < YEAR_MAX && (t.year ?? 9999) > f.yearTo) return false;
+		if (skip !== 'rating' && f.ratingMin > 0 && (t.rating ?? 0) < f.ratingMin) return false;
+		if (skip !== 'crew' && f.crew.length && f.crewNames) {
+			const names = (t.crew_ids ?? []).map((id) => f.crewNames!.get(id)).filter(Boolean);
+			if (!f.crew.some((name) => names.includes(name))) return false;
+		}
+		return true;
+	}
+
 	// ── Filtered + sorted titles ──────────────────────────────────────────────
 	let filtered = $derived.by(() => {
-		const q = fold(searchQuery.trim());
+		const f = filterConfig;
 		return data.titles
-			.filter((t) => {
-				// Katalóg shows works only — episodes/seasons roll up under their serial.
-				if (t.is_toplevel === false) return false;
-				if (q && !fold(t.title).includes(q) && !fold(t.title_en ?? '').includes(q))
-					return false;
-				if (selectedGenres.length && !selectedGenres.some((g) => t.genres.includes(g)))
-					return false;
-				if (selectedPlatforms.length && !selectedPlatforms.some((p) => t.platforms.includes(p)))
-					return false;
-				if (selectedCountries.length && !selectedCountries.some((c) => t.countries.includes(c)))
-					return false;
-				if (selectedTags.length && !selectedTags.some((tag) => t.tags.includes(tag)))
-					return false;
-				if (selectedType && t.title_type !== selectedType) return false;
-				if (yearFrom > YEAR_MIN && (t.year ?? 0) < yearFrom) return false;
-				if (yearTo < YEAR_MAX && (t.year ?? 9999) > yearTo) return false;
-				if (ratingMin > 0 && (t.rating ?? 0) < ratingMin) return false;
-				// Crew filter
-				if (selectedCrew.length && crewIdToName) {
-					const titleCrewNames = (t.crew_ids ?? []).map((id) => crewIdToName!.get(id)).filter(Boolean);
-					if (!selectedCrew.some((name) => titleCrewNames.includes(name))) return false;
-				}
-				return true;
-			})
+			.filter((t) => passes(t, f, ''))
 			.sort((a, b) => {
 				if (sortBy === 'rating') return (b.rating ?? 0) - (a.rating ?? 0);
 				if (sortBy === 'year') return (b.year ?? 0) - (a.year ?? 0);
@@ -103,6 +160,12 @@
 				return (b.vod_date ?? '').localeCompare(a.vod_date ?? '');
 			});
 	});
+
+	// Facet availability: apply every filter EXCEPT the facet's own dimension.
+	let genreBase = $derived.by(() => data.titles.filter((t) => passes(t, filterConfig, 'genre')));
+	let platformBase = $derived.by(() => data.titles.filter((t) => passes(t, filterConfig, 'platform')));
+	let countryBase = $derived.by(() => data.titles.filter((t) => passes(t, filterConfig, 'country')));
+	let tagBase = $derived.by(() => data.titles.filter((t) => passes(t, filterConfig, 'tag')));
 
 	$effect(() => {
 		filtered;
@@ -125,34 +188,38 @@
 		if (yearFrom > YEAR_MIN) params.set('yearFrom', String(yearFrom));
 		if (yearTo < YEAR_MAX) params.set('yearTo', String(yearTo));
 		if (ratingMin > 0) params.set('ratingMin', String(ratingMin));
+		if (recencyDays > 0) params.set('added', String(recencyDays));
 		if (sortBy !== 'vod_date') params.set('sort', sortBy);
 		const str = params.toString();
 		history.replaceState(null, '', str ? '?' + str : location.pathname);
 	});
 
 	// ── Dimension pills available counts ─────────────────────────────────────
+	// Each facet's `hit` is computed against the set that applies every OTHER
+	// filter but not this dimension's own selection (see `passes`/`*Base`), so an
+	// already-picked value never disables its siblings.
 	let availableGenres = $derived(
 		data.dimensions.genres.map((g) => ({
 			...g,
-			hit: filtered.some((t) => t.genres.includes(g.name))
+			hit: genreBase.some((t) => t.genres.includes(g.name))
 		}))
 	);
 	let availablePlatforms = $derived(
 		data.dimensions.platforms.map((p) => ({
 			...p,
-			hit: filtered.some((t) => t.platforms.includes(p.name))
+			hit: platformBase.some((t) => t.platforms.includes(p.name))
 		}))
 	);
 	let availableCountries = $derived(
 		data.dimensions.countries.slice(0, 30).map((c) => ({
 			...c,
-			hit: filtered.some((t) => t.countries.includes(c.name))
+			hit: countryBase.some((t) => t.countries.includes(c.name))
 		}))
 	);
 	let availableTags = $derived(
 		data.dimensions.tags.slice(0, 50).map((tag) => ({
 			...tag,
-			hit: filtered.some((t) => t.tags.includes(tag.name))
+			hit: tagBase.some((t) => t.tags.includes(tag.name))
 		}))
 	);
 
@@ -178,6 +245,7 @@
 		yearFrom = YEAR_MIN;
 		yearTo = YEAR_MAX;
 		ratingMin = 0;
+		recencyDays = 0;
 		filterPanelOpen = false;
 	}
 
@@ -191,7 +259,8 @@
 			selectedCrew.length > 0 ||
 			yearFrom > YEAR_MIN ||
 			yearTo < YEAR_MAX ||
-			ratingMin > 0
+			ratingMin > 0 ||
+			recencyDays > 0
 	);
 
 	let activeFilterCount = $derived(
@@ -204,7 +273,8 @@
 			selectedCrew.length +
 			(yearFrom > YEAR_MIN ? 1 : 0) +
 			(yearTo < YEAR_MAX ? 1 : 0) +
-			(ratingMin > 0 ? 1 : 0)
+			(ratingMin > 0 ? 1 : 0) +
+			(recencyDays > 0 ? 1 : 0)
 	);
 
 	// ── Active filter chips ──────────────────────────────────────────────────
@@ -218,6 +288,7 @@
 		for (const c of selectedCrew) chips.push({ category: 'Tvůrce', value: c });
 		if (yearFrom > YEAR_MIN || yearTo < YEAR_MAX) chips.push({ category: 'Rok', value: `${yearFrom}–${yearTo}` });
 		if (ratingMin > 0) chips.push({ category: 'Hodnocení', value: `${ratingMin}%+` });
+		if (recencyDays > 0) chips.push({ category: 'Přidáno', value: recencyLabel(recencyDays) });
 		return chips;
 	});
 
@@ -230,6 +301,7 @@
 		else if (category === 'Tvůrce') selectedCrew = selectedCrew.filter((c) => c !== value);
 		else if (category === 'Rok') { yearFrom = YEAR_MIN; yearTo = YEAR_MAX; }
 		else if (category === 'Hodnocení') ratingMin = 0;
+		else if (category === 'Přidáno') recencyDays = 0;
 	}
 
 	// ── Modal ─────────────────────────────────────────────────────────────────
@@ -327,6 +399,9 @@
 			{ratingMin}
 			yearMin={YEAR_MIN}
 			yearMax={YEAR_MAX}
+			recencyOptions={RECENCY_OPTIONS}
+			{recencyDays}
+			onRecencyChange={(days) => (recencyDays = days)}
 			onToggleGenre={(name) => (selectedGenres = toggle(selectedGenres, name))}
 			onTogglePlatform={(name) => (selectedPlatforms = toggle(selectedPlatforms, name))}
 			onToggleCountry={(name) => (selectedCountries = toggle(selectedCountries, name))}
@@ -400,6 +475,24 @@
 			</div>
 
 			<div class="sheet-body">
+				<div class="filter-group">
+					<h3 class="filter-label">Přidáno na VOD</h3>
+					<div class="recency-seg" role="radiogroup" aria-label="Přidáno na VOD">
+						{#each RECENCY_OPTIONS as opt}
+							<button
+								type="button"
+								class="recency-opt"
+								class:active={recencyDays === opt.days}
+								role="radio"
+								aria-checked={recencyDays === opt.days}
+								onclick={() => (recencyDays = opt.days)}
+							>
+								{opt.label}
+							</button>
+						{/each}
+					</div>
+				</div>
+
 				<div class="filter-group">
 					<h3 class="filter-label">Typ</h3>
 					<PillGrid
@@ -536,6 +629,44 @@
 		font-size: 0.85rem;
 		cursor: pointer;
 		outline: none;
+	}
+
+	/* Recency segmented control (mobile filter sheet) */
+	.recency-seg {
+		display: inline-flex;
+		flex-wrap: wrap;
+		gap: 2px;
+		padding: 3px;
+		background: var(--navy-700);
+		border: 1px solid var(--border);
+		border-radius: 999px;
+	}
+
+	.recency-opt {
+		padding: 0.35rem 0.85rem;
+		border: none;
+		background: none;
+		border-radius: 999px;
+		color: var(--text-secondary);
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+		white-space: nowrap;
+		transition: background 0.15s, color 0.15s;
+	}
+
+	.recency-opt:hover {
+		color: var(--text-primary);
+	}
+
+	.recency-opt.active {
+		background: var(--amber);
+		color: var(--navy-900);
+	}
+
+	.recency-opt:focus-visible {
+		outline: 2px solid var(--amber);
+		outline-offset: 2px;
 	}
 
 	.filter-bar-row {

@@ -28,6 +28,10 @@
 		ratingMin,
 		yearMin = 1920,
 		yearMax = 2026,
+		// Recency ("Přidáno na VOD") — optional; the dropdown only renders when provided
+		recencyOptions = undefined,
+		recencyDays = 0,
+		onRecencyChange = undefined,
 		// Callbacks
 		onToggleGenre,
 		onTogglePlatform,
@@ -58,6 +62,9 @@
 		ratingMin: number;
 		yearMin?: number;
 		yearMax?: number;
+		recencyOptions?: { label: string; days: number }[];
+		recencyDays?: number;
+		onRecencyChange?: (days: number) => void;
 		onToggleGenre: (name: string) => void;
 		onTogglePlatform: (name: string) => void;
 		onToggleCountry: (name: string) => void;
@@ -73,6 +80,12 @@
 		typeOptions.map((t) => ({ name: t, hit: true }))
 	);
 
+	let recencyLabel = $derived(
+		recencyDays > 0
+			? 'Přidáno · ' + (recencyOptions?.find((o) => o.days === recencyDays)?.label ?? '')
+			: 'Přidáno'
+	);
+
 	function formatCrew(item: { name: string; role?: string; count?: number }) {
 		const parts = [item.name];
 		if (item.role) parts.push(`(${item.role}`);
@@ -83,6 +96,28 @@
 </script>
 
 <div class="filter-bar">
+	{#if recencyOptions && onRecencyChange}
+		<FilterDropdown label={recencyLabel} activeCount={recencyDays > 0 ? 1 : 0}>
+			<div class="recency-list" role="radiogroup" aria-label="Přidáno na VOD">
+				{#each recencyOptions as opt}
+					<button
+						type="button"
+						class="recency-item"
+						class:active={recencyDays === opt.days}
+						role="radio"
+						aria-checked={recencyDays === opt.days}
+						onclick={() => onRecencyChange(opt.days)}
+					>
+						<span>{opt.label}</span>
+						{#if recencyDays === opt.days}
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+						{/if}
+					</button>
+				{/each}
+			</div>
+		</FilterDropdown>
+	{/if}
+
 	<FilterDropdown label="Žánr" activeCount={selectedGenres.length}>
 		<PillGrid items={genres} selected={selectedGenres} onToggle={onToggleGenre} />
 	</FilterDropdown>
@@ -167,6 +202,45 @@
 	.filter-bar::-webkit-scrollbar-thumb {
 		background: var(--navy-600);
 		border-radius: 2px;
+	}
+
+	/* Single-select recency list inside its dropdown */
+	.recency-list {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 160px;
+	}
+
+	.recency-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.5rem 0.7rem;
+		border: none;
+		background: none;
+		border-radius: 8px;
+		color: var(--text-secondary);
+		font-size: 0.88rem;
+		text-align: left;
+		cursor: pointer;
+		transition: background 0.15s, color 0.15s;
+	}
+
+	.recency-item:hover {
+		background: var(--navy-700);
+		color: var(--text-primary);
+	}
+
+	.recency-item.active {
+		color: var(--amber);
+		font-weight: 700;
+	}
+
+	.recency-item:focus-visible {
+		outline: 2px solid var(--amber);
+		outline-offset: -2px;
 	}
 
 	@media (max-width: 640px) {
