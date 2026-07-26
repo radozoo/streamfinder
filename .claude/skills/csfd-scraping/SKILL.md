@@ -57,10 +57,14 @@ Full detail + code pointers in **`docs/csfd-scraping-rules.md`**. The short list
   Verify against the scraped page before deleting suspicious-looking data.
 - **Two harvest sources.** The monthly `/vod/?year=&month=` feed only sees a
   title's dated VOD *arrival* — an old catalog title with no dated event (Dexter,
-  Game of Thrones) is invisible to it. `harvest-platforms` covers this via each
-  platform's `/vod/{slug}/` browse listing, which DOES clamp like the monthly feed
-  (unlike the base `/vod/` browse or its query facets, which never terminate —
-  don't try to harvest those exhaustively). See rules doc §1b.
+  Game of Thrones) is invisible to it, and **this recurs indefinitely** as
+  platforms keep adding undated catalog titles (not a one-off gap to patch once).
+  `harvest-platforms` covers this via each platform's `/vod/{slug}/` browse
+  listing, which DOES clamp like the monthly feed (unlike the base `/vod/` browse
+  or its query facets, which never terminate — don't try to harvest those
+  exhaustively). It's a separate, sparse-cadence sweep (~2.5h for the 8 major
+  platforms) — not part of `update`, run monthly/quarterly or when a title is
+  reported missing. See rules doc §1b + update-architecture.md.
 - **Hierarchy:** `root_id` = first `/film/{id}` segment, `csfd_id` = last;
   `is_toplevel = root_id == csfd_id`. Katalóg = works, Kalendár = release events.
 - **Slug drift → duplicates.** ČSFD renames slugs over time (`…-episode-5/` →
