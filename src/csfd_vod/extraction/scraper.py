@@ -100,6 +100,40 @@ class VODScraper:
         """Return True only for film/series overview pages, not episodes or reviews."""
         return bool(self._TITLE_OVERVIEW_RE.match(url))
 
+    _PAGE_NUM_RE = re.compile(r"page=(\d+)")
+
+    def _declared_last_page(self, html: str) -> int:
+        """Largest page number the listing's paginator links to — i.e. its last page.
+
+        CSFD's paginator always includes a jump to the final page (e.g. links to
+        2,3,4,5,6,20 → last page is 20). This is our completeness signal: if the
+        harvest of a month stops before this page, it silently truncated the month.
+        Returns 1 when there is no pagination (single-page month).
+
+        Parsed via BeautifulSoup so `&amp;page=20` in the raw HTML is read as a real
+        query param — a raw-string regex would miss the HTML-encoded ampersand and
+        under-report the last page, quietly defeating the completeness guard.
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        pages = [
+            int(m.group(1))
+            for a in soup.select("a[href*='page=']")
+            if (m := self._PAGE_NUM_RE.search(a.get("href", "")))
+        ]
+        return max(pages) if pages else 1
+
+    def _extract_title_urls(self, html: str) -> List[str]:
+        """Absolute /film/ URLs from a listing page's HTML (same selector as fetch)."""
+        selector = self.selectors.get("vod_page", {}).get("title_link_selector", "a[href*='/film/']")
+        soup = BeautifulSoup(html, "html.parser")
+        out: List[str] = []
+        for a in soup.select(selector):
+            href = a.get("href")
+            if not href:
+                continue
+            out.append(href if href.startswith("http") else f"https://www.csfd.cz{href}")
+        return out
+
     def scrape_vod_month_page(self, year: int, month: int, page: int = 1) -> Tuple[List[str], str]:
         """
         Scrape film URLs from a single month-page of the VOD listing.
@@ -146,6 +180,9 @@ class VODScraper:
         """
         seen: set = set()
         today = date.today()
+        # Completeness report: months where we failed to reach CSFD's declared last
+        # page. Empty after a healthy harvest; inspected by the caller as a guard.
+        self.incomplete_months: List[dict] = []
 
         if list_html_dir is not None:
             list_html_dir.mkdir(parents=True, exist_ok=True)
@@ -154,33 +191,75 @@ class VODScraper:
         while (year, month) <= (today.year, today.month):
             page = 1
             prev_page_urls: set = set()
+            last_nonempty = 0     # highest page index we actually saw items on
+            reason = None         # why pagination stopped: clamp | empty | cap
             while True:
-                urls, html = self.scrape_vod_month_page(year, month, page)
-                if list_html_dir is not None:
-                    page_path = list_html_dir / f"{year}_{month:02d}_p{page:02d}.html"
-                    if not page_path.exists():
+                # Cache-aware: reuse an already-downloaded page, otherwise fetch it.
+                # This makes a full re-harvest resumable and cheap — we only hit the
+                # network for pages not yet on disk (e.g. the tail a buggy earlier
+                # run never reached) instead of re-fetching thousands of good pages.
+                page_path = (
+                    list_html_dir / f"{year}_{month:02d}_p{page:02d}.html"
+                    if list_html_dir is not None else None
+                )
+                if page_path is not None and page_path.exists():
+                    html = page_path.read_text(encoding="utf-8")
+                    urls = self._extract_title_urls(html)
+                else:
+                    urls, html = self.scrape_vod_month_page(year, month, page)
+                    if page_path is not None:
                         page_path.write_text(html, encoding="utf-8")
                         logger.info("list_page_cached", path=str(page_path))
+
                 overview_urls = [u for u in urls if self._is_title_overview_url(u)]
                 page_url_set = set(overview_urls)
-                # Stop only at the REAL end of the month: a page with no title links,
-                # or one identical to the previous page (CSFD clamps out-of-range
-                # pages to the last one). Do NOT stop merely because a page had no
-                # *new* URLs — `seen` is global across months, so a single mid-month
-                # page of already-seen re-releases must not truncate the rest of the
-                # month. That premature break dropped ~12k episode URLs of ongoing
-                # series (e.g. every part of True Detective).
-                if not page_url_set or page_url_set == prev_page_urls:
+                # Determine the real end of the month. CSFD CLAMPS an out-of-range
+                # page to the last real page, so the reliable end-of-month signal is
+                # a page whose items repeat the previous page — NOT the paginator's
+                # "last page" number, which is a phantom (page 1 always links to a
+                # far page like 20 even for a 5-page month). Do NOT stop merely on
+                # "no new URLs": `seen` is global across months, so a mid-month page
+                # of already-seen re-releases must not truncate the rest (the bug
+                # that dropped ~12k episode URLs, e.g. every part of True Detective).
+                if page_url_set == prev_page_urls and prev_page_urls:
+                    reason = "clamp"   # reached the real last page
                     break
-                new_urls = [u for u in overview_urls if u not in seen]
-                seen.update(new_urls)
+                if not page_url_set:
+                    reason = "empty"   # no items — empty month, or a failed fetch
+                    break
+                last_nonempty = page
+                seen.update(u for u in overview_urls if u not in seen)
                 prev_page_urls = page_url_set
                 page += 1
                 if page > 500:  # safety cap against a non-terminating listing
                     logger.warning("harvest_page_cap_reached", year=year, month=month)
+                    reason = "cap"
                     break
 
-            logger.info("harvest_month_complete", year=year, month=month, total_unique=len(seen))
+            # Completeness invariant, phrased around HOW the month ended:
+            #  - "clamp": CSFD served the last page again → we reached the true end. ✓
+            #  - "empty" at page 1: a month with no VOD releases. ✓
+            #  - "empty" after real content: CSFD clamps rather than returning empty
+            #    at the true end, so a mid-month empty page almost always means a
+            #    FAILED FETCH — the month is truncated (the class of bug that lost
+            #    Twin Peaks). ✗
+            #  - "cap": runaway pagination. ✗
+            suspect = reason == "cap" or (reason == "empty" and last_nonempty >= 1)
+            if suspect:
+                logger.error(
+                    "harvest_month_incomplete",
+                    year=year, month=month, pages_fetched=last_nonempty, reason=reason,
+                )
+                self.incomplete_months.append({
+                    "year": year, "month": month,
+                    "pages_fetched": last_nonempty, "reason": reason,
+                })
+
+            logger.info(
+                "harvest_month_complete",
+                year=year, month=month,
+                pages_fetched=last_nonempty, reason=reason, total_unique=len(seen),
+            )
 
             # advance to next month
             if month == 12:
@@ -190,7 +269,13 @@ class VODScraper:
                 month += 1
 
         result = sorted(seen)
-        logger.info("harvest_all_complete", total_unique=len(result))
+        if self.incomplete_months:
+            logger.error("harvest_incomplete", incomplete_months=len(self.incomplete_months))
+        logger.info(
+            "harvest_all_complete",
+            total_unique=len(result),
+            incomplete_months=len(self.incomplete_months),
+        )
         return result
 
     def _scrape_vod_list_playwright(self, vod_page_url: str) -> List[str]:

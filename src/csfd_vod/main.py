@@ -71,8 +71,27 @@ def cmd_harvest(args) -> dict:
     vod_urls_path.parent.mkdir(parents=True, exist_ok=True)
     vod_urls_path.write_text(json.dumps(urls, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    logger.info("cmd_harvest_complete", run_id=run_id, count=len(urls), path=str(vod_urls_path))
-    return {"success": True, "run_id": run_id, "count": len(urls), "path": str(vod_urls_path)}
+    # Completeness guard: every month must have been harvested to CSFD's own last
+    # page. Any shortfall means a month was silently truncated (the class of bug
+    # that dropped Twin Peaks) — surface it loudly instead of shipping a gap.
+    incomplete = getattr(scraper, "incomplete_months", [])
+    complete = not incomplete
+    if not complete:
+        logger.error("cmd_harvest_incomplete", run_id=run_id, incomplete_months=incomplete)
+
+    logger.info(
+        "cmd_harvest_complete",
+        run_id=run_id, count=len(urls), path=str(vod_urls_path),
+        complete=complete, incomplete_months=len(incomplete),
+    )
+    return {
+        "success": True,
+        "run_id": run_id,
+        "count": len(urls),
+        "path": str(vod_urls_path),
+        "complete": complete,
+        "incomplete_months": incomplete,
+    }
 
 
 # ---------------------------------------------------------------------------
