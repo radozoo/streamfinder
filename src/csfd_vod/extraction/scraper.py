@@ -175,6 +175,11 @@ class VODScraper:
         "sky-showtime", "apple-tv", "oneplay", "prima-plus",
     ]
 
+    # A real listing page is hundreds of KB; a bot-protection challenge stub (no
+    # listing, just an `ab_detection` script) observed at 334 bytes. Anything this
+    # small is a failed fetch, not a legitimately empty/short page.
+    _MIN_LISTING_PAGE_BYTES = 5000
+
     def scrape_vod_platform_page(self, platform_slug: str, page: int = 1) -> Tuple[List[str], str]:
         """Scrape film URLs from a single page of a platform's /vod/{slug}/ listing."""
         url = f"https://www.csfd.cz/vod/{platform_slug}/?page={page}"
@@ -220,11 +225,29 @@ class VODScraper:
                 list_html_dir / f"platform_{platform_slug}_p{page:03d}.html"
                 if list_html_dir is not None else None
             )
-            if page_path is not None and page_path.exists():
+            if (
+                page_path is not None and page_path.exists()
+                and page_path.stat().st_size >= self._MIN_LISTING_PAGE_BYTES
+            ):
                 html = page_path.read_text(encoding="utf-8")
                 urls = self._extract_title_urls(html)
             else:
-                urls, html = self.scrape_vod_platform_page(platform_slug, page)
+                if page_path is not None and page_path.exists():
+                    logger.warning("platform_page_cache_poisoned_refetching", path=str(page_path))
+                # Retry a failed/challenge-stub fetch a few times before giving up —
+                # a transient block should not be mistaken for the catalog's end.
+                for attempt in range(3):
+                    urls, html = self.scrape_vod_platform_page(platform_slug, page)
+                    if len(html) >= self._MIN_LISTING_PAGE_BYTES:
+                        break
+                    logger.warning(
+                        "platform_page_too_small_retry",
+                        platform=platform_slug, page=page, attempt=attempt + 1, bytes=len(html),
+                    )
+                else:
+                    reason = "fetch_failed"
+                    logger.error("platform_page_fetch_failed", platform=platform_slug, page=page)
+                    break
                 if page_path is not None:
                     page_path.write_text(html, encoding="utf-8")
                     logger.info("platform_page_cached", path=str(page_path))
@@ -246,7 +269,18 @@ class VODScraper:
                 reason = "cap"
                 break
 
-        suspect = reason == "cap" or (reason == "empty" and last_nonempty == 0)
+        # Same invariant as the monthly harvest (scrape_vod_all_urls): CSFD CLAMPS
+        # an out-of-range page rather than emptying it (verified empirically —
+        # /vod/netflix/?page=328 == ?page=327, its own declared last page). So an
+        # "empty" page reached AFTER real content (last_nonempty >= 1) is almost
+        # always a FAILED FETCH (e.g. a tiny bot-protection challenge stub — one
+        # such 334-byte stub silently truncated a prime-video run at page 188 of
+        # a declared 192 before this was caught), not a genuine end — flag it.
+        # Only "empty" at page 1 (last_nonempty == 0) is a legitimately empty
+        # platform (not expected for the major platforms, but not impossible).
+        # "fetch_failed" = a challenge stub survived 3 retries — never silently
+        # treat that as the catalog's end either.
+        suspect = reason in ("cap", "fetch_failed") or (reason == "empty" and last_nonempty >= 1)
         if suspect:
             logger.error(
                 "harvest_platform_incomplete",
