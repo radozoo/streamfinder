@@ -107,6 +107,95 @@ export const load: PageLoad = async ({ parent }) => {
 		.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
 		.slice(0, 18);
 
+	// Artové filmy — a composite score, not a single threshold. Neither "low votes"
+	// nor "Drama" alone is selective: votes_count is biased by era and platform reach
+	// (a 1965 arthouse film can't out-vote a 2024 Netflix drop), and Drama is simply
+	// the largest genre (a third of the catalog). So: rare CSFD genre tags that are
+	// genuine stylistic markers (Experimentální, Film-Noir, Poetický…) count far more
+	// than the broad ones; "obscurity" is the film's votes_count percentile within
+	// its own decade, not an absolute count; and a few mainstream/fandom genres
+	// (Hudební, Sportovní, Reality-TV…) actively pull the score down — otherwise
+	// concert-film and "making of" documentaries (excluded by title below) dominate
+	// on rating+low-votes alone.
+	const RARE_ART_GENRES = new Set([
+		'Experimentální', 'Film-Noir', 'Poetický', 'Podobenství', 'Povídkový', 'Psychologický'
+	]);
+	const SOFT_ART_GENRES = new Set(['Drama', 'Dokumentární', 'Životopisný', 'Krátkometrážní']);
+	const MAINSTREAM_GENRES = new Set([
+		'Akční', 'Sci-Fi', 'Fantasy', 'Horor', 'Rodinný', 'Animovaný', 'Muzikál', 'Western',
+		'Dobrodružný', 'Hudební', 'Sportovní', 'Reality-TV', 'Soutěžní', 'Stand-up', 'Talk-show',
+		'Katastrofický', 'Telenovela', 'Pohádka', 'Naučný', 'Erotický', 'Pornografický'
+	]);
+	const ART_TAGS = new Set(['festival', 'surrealismus', 'avantgarda', 'černobílý film']);
+	// Franchise/promo shorts ("Jak vznikal…", "Making of…") share Dokumentární +
+	// Krátkometrážní with real short-form documentaries but aren't films in their
+	// own right — exclude by title since no field marks them as bonus content.
+	const MAKING_OF_RE = /^(jak (vznikal|se nat[aá]čel|se d[eě]lal)|making of|tvorb[ay] (seri[aá]lu|filmu))/i;
+	const hasAny = (have: string[], want: Set<string>) => have.some((g) => want.has(g));
+
+	const isArtBase = (t: (typeof titles)[number]) =>
+		t.title_type === 'film' && Boolean(t.poster) && Boolean(t.year) && !MAKING_OF_RE.test(t.title);
+
+	// A KVIFF (Karlovy Vary) mention in the plot or a review is a curatorial fact —
+	// the film was actually selected for the Czech A-list festival — not an inferred
+	// heuristic. So it bypasses the rating/votes floor below: a challenging arthouse
+	// pick often gets a mixed or low audience score on ČSFD precisely because it's
+	// uncompromising, and a brand-new festival premiere hasn't accumulated votes yet.
+	const artCandidates = titles.filter(
+		(t) => isArtBase(t) && (t.kviff || (t.rating !== null && (t.votes_count ?? 0) >= 40))
+	);
+
+	// Relative obscurity: percentile rank of votes_count within its own decade.
+	const decadeGroups = new Map<number, typeof artCandidates>();
+	for (const t of artCandidates) {
+		const decade = Math.floor((t.year as number) / 10) * 10;
+		if (!decadeGroups.has(decade)) decadeGroups.set(decade, []);
+		decadeGroups.get(decade)!.push(t);
+	}
+	const votesPercentile = new Map<number, number>();
+	for (const group of decadeGroups.values()) {
+		const sorted = [...group].sort((a, b) => (a.votes_count ?? 0) - (b.votes_count ?? 0));
+		sorted.forEach((t, i) =>
+			votesPercentile.set(t.id, sorted.length > 1 ? i / (sorted.length - 1) : 0.5)
+		);
+	}
+
+	const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+
+	const artScore = (t: (typeof artCandidates)[number]) => {
+		const quality = clamp01(((t.rating ?? 0) - 65) / 30);
+		const obscurity = 1 - (votesPercentile.get(t.id) ?? 0.5);
+		const genreScore =
+			(hasAny(t.genres, RARE_ART_GENRES) ? 1.6 : 0) +
+			(hasAny(t.genres, SOFT_ART_GENRES) ? 0.4 : 0) -
+			(hasAny(t.genres, MAINSTREAM_GENRES) ? 0.8 : 0);
+		const tagBonus = hasAny(t.tags, ART_TAGS) ? 1 : 0;
+		const originBonus = !t.countries.includes('USA') && !t.countries.includes('Velká Británie') ? 1 : 0;
+		return 2.5 * quality + 1.5 * obscurity + 2 * genreScore + tagBonus + 0.4 * originBonus;
+	};
+
+	const ART_RAIL_SIZE = 18;
+	const KVIFF_SLOTS = 8;
+
+	// Two tiers, not one blended score: a flat KVIFF bonus large enough to guarantee
+	// inclusion would also let it dominate every slot (there are more KVIFF-tagged
+	// films some months than the whole rail), crowding out the score-only discoveries
+	// that are the point of this section. Reserved slots keep both visible.
+	const kviffPool = artCandidates
+		.filter((t) => t.kviff)
+		.map((t) => ({ t, s: artScore(t) }))
+		.sort((a, b) => b.s - a.s);
+	const otherPool = artCandidates
+		.filter((t) => !t.kviff)
+		.map((t) => ({ t, s: artScore(t) }))
+		.filter(({ s }) => s >= 4)
+		.sort((a, b) => b.s - a.s);
+
+	const kviffTaken = Math.min(KVIFF_SLOTS, kviffPool.length);
+	const artFilms = [...kviffPool.slice(0, kviffTaken), ...otherPool.slice(0, ART_RAIL_SIZE - kviffTaken)]
+		.slice(0, ART_RAIL_SIZE)
+		.map(({ t }) => t);
+
 	// Stats
 	const stats = {
 		total: titles.length,
@@ -119,5 +208,14 @@ export const load: PageLoad = async ({ parent }) => {
 		),
 	};
 
-	return { featuredList, justAdded, bestThisMonth, runningSerials, hiddenGems, stats, dimensions };
+	return {
+		featuredList,
+		justAdded,
+		bestThisMonth,
+		runningSerials,
+		hiddenGems,
+		artFilms,
+		stats,
+		dimensions
+	};
 };

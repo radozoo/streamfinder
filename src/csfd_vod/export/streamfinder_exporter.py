@@ -146,6 +146,7 @@ class StreamfinderExporter:
             reviews_map = self._load_reviews(session)
             vods_map = self._load_vods(session)   # {title_id: [{platform, url}]}
             tmdb_map = self._load_tmdb(session)   # {title_id: {poster, backdrop, trailer}}
+            kviff_ids = self._load_kviff_flags(session)
 
             titles = self._load_titles(session)
 
@@ -164,7 +165,7 @@ class StreamfinderExporter:
             # titles_index.json — lightweight, used for grid/calendar (now includes crew_ids)
             index = self._build_index(
                 titles, genres_map, tags_map, countries_map, vods_map, tmdb_map,
-                title_crew_map, root_title_id, serial_agg,
+                title_crew_map, root_title_id, serial_agg, kviff_ids,
             )
             _write(out / "titles_index.json", index)
 
@@ -311,6 +312,19 @@ class StreamfinderExporter:
                     "stars": row[3],
                 })
         return result
+
+    def _load_kviff_flags(self, session: Session) -> set[int]:
+        """Title ids whose plot or a review mentions KVIFF / Karlovy Vary — the
+        Czech A-list festival, a high-precision arthouse signal (unlike genre or
+        rating, an actual curatorial fact about the film). Scans ALL reviews, not
+        just the top-3 kept in reviews_map, since a KVIFF mention is rare and easy
+        to miss if it isn't the highest-starred one."""
+        sql = text("""
+            SELECT title_id FROM csfd_vod.fact_titles WHERE plot ~* 'kviff|karlov[ýy]\\s*var'
+            UNION
+            SELECT title_id FROM csfd_vod.dim_reviews WHERE review_text ~* 'kviff|karlov[ýy]\\s*var'
+        """)
+        return {row[0] for row in session.execute(sql)}
 
     def _load_tmdb(self, session: Session) -> dict[int, dict]:
         """Load TMDB metadata per title."""
@@ -469,6 +483,7 @@ class StreamfinderExporter:
         title_crew_map: dict[int, list[int]],
         root_title_id: dict[int, int],
         serial_agg: dict[int, dict],
+        kviff_ids: set[int],
     ) -> list[dict]:
         """Lightweight index entry per title for grid/calendar views."""
         root_poster = _root_posters(titles, tmdb_map)
@@ -530,6 +545,8 @@ class StreamfinderExporter:
                 "season_no": t["season_no"],
                 "episode_no": t["episode_no"],
             }
+            if tid in kviff_ids:
+                entry["kviff"] = True
             # A fresh episode/season with no rating of its own borrows one to show,
             # clearly marked as inherited so it never poses as the episode's own score.
             if not is_toplevel and t["rating"] is None:

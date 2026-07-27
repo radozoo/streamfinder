@@ -180,6 +180,7 @@
 {@render rail('Výběr redakce', 'Nejlíp hodnocené tento měsíc', data.bestThisMonth, `${base}/katalog?sort=rating`, 'Zobrazit vše →')}
 {@render rail('Nové epizody každý týden', 'Seriály, co právě běží', data.runningSerials, `${base}/katalog?type=${encodeURIComponent('seriál')}`, 'Zobrazit vše →')}
 {@render rail('80 %+ a málo vidění', 'Skryté klenoty', data.hiddenGems, `${base}/katalog?sort=rating`, 'Zobrazit vše →')}
+{@render rail('Nízká sledovanost, výrazný styl', 'Artové filmy', data.artFilms, `${base}/katalog?type=${encodeURIComponent('film')}&sort=rating`, 'Prozkoumat →')}
 
 <!-- Podle platformy -->
 <section class="home-section page-container">

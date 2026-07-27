@@ -32,6 +32,9 @@ export interface TitleIndex {
 	last_vod_date?: string | null;
 	is_running?: boolean;
 	cadence_days?: number | null;
+	// Plot or a review mentions KVIFF / Karlovy Vary — the film played the Czech
+	// A-list festival. A curatorial fact, not a heuristic, so it's a strong signal.
+	kviff?: boolean;
 }
 
 export interface TitleDetail extends TitleIndex {
