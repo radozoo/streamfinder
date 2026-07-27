@@ -439,7 +439,7 @@ def cmd_dashboard(args) -> dict:
 # ---------------------------------------------------------------------------
 
 def cmd_streamfinder(args) -> dict:
-    """Export Streamfinder JSON data files (titles_index, titles_detail, dimensions)."""
+    """Export Streamfinder JSON data files (titles_index, per-title detail/, dimensions)."""
     config = load_config_from_env()
     exporter = StreamfinderExporter(config.database.connection_string)
     logger.info("cmd_streamfinder_start", output_dir=args.output_dir)

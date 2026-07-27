@@ -7,10 +7,8 @@ import { error } from '@sveltejs/kit';
 export const prerender = false;
 
 export const load: PageLoad = async ({ params, fetch }) => {
-	const res = await fetch(`${base}/data/titles_detail.json`);
-	const detail: Record<string, TitleDetail> = await res.json();
-	const key = `${params.id}-${params.slug}`;
-	const title = detail[key];
-	if (!title) error(404, 'Titul nenalezen');
+	const res = await fetch(`${base}/data/detail/${params.id}-${params.slug}.json`);
+	if (!res.ok) error(404, 'Titul nenalezen');
+	const title: TitleDetail = await res.json();
 	return { title };
 };

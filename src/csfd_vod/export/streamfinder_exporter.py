@@ -1,14 +1,18 @@
 """Streamfinder JSON exporter.
 
-Produces 4 files for the SvelteKit static site:
+Produces these outputs for the SvelteKit static site:
   - titles_index.json   lightweight grid data (~3MB) used for Katalog + Kalendar
-  - titles_detail.json  full per-title data (plot, reviews, crew, vod_urls)
+  - detail/{id}-{slug}.json  one full per-title file (plot, reviews, crew, vod_urls),
+    fetched on demand — a single combined titles_detail.json outgrew 60MB and every
+    page (including the single-title route) was downloading all of it just to read
+    one entry.
   - dimensions.json     flat lookup tables (genres, tags, platforms, countries, top crew)
   - crew_index.json     crew lookup table for lazy-loaded filtering (~26k entries)
 """
 
 import json
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -169,13 +173,13 @@ class StreamfinderExporter:
             )
             _write(out / "titles_index.json", index)
 
-            # titles_detail.json — full per-title dict, keyed by '{title_id}-{slug}'
+            # detail/{title_id}-{slug}.json — one file per title, fetched on demand
             detail = self._build_detail(
                 titles, genres_map, tags_map, countries_map, directors_map, actors_map,
                 screenwriters_map, cinematographers_map, composers_map, reviews_map, vods_map, tmdb_map,
                 episodes_map, serial_agg, root_title_id,
             )
-            _write(out / "titles_detail.json", detail)
+            _write_detail_shards(out / "detail", detail)
 
             # dimensions.json — sorted lists for facet panel (now includes top crew)
             dimensions = self._build_dimensions(genres_map, tags_map, countries_map, vods_map, crew_list)
@@ -186,7 +190,8 @@ class StreamfinderExporter:
                 "output_dir": str(out.absolute()),
                 "total_titles": len(titles),
                 "crew_entries": len(crew_list),
-                "files_written": ["titles_index.json", "titles_detail.json", "dimensions.json", "crew_index.json"],
+                "detail_files": len(detail),
+                "files_written": ["titles_index.json", f"detail/ ({len(detail)} files)", "dimensions.json", "crew_index.json"],
                 "export_timestamp": datetime.utcnow().isoformat() + "Z",
             }
             logger.info("streamfinder_export_complete", **stats)
@@ -703,3 +708,14 @@ class StreamfinderExporter:
 
 def _write(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+
+
+def _write_detail_shards(dir_path: Path, detail: dict[str, dict]) -> None:
+    """One JSON file per title, keyed by filename '{title_id}-{slug}.json'. The
+    directory is rebuilt from scratch each export so a slug-drift rename (a title's
+    filename changing between runs) can't leave a stale orphaned file behind."""
+    if dir_path.exists():
+        shutil.rmtree(dir_path)
+    dir_path.mkdir(parents=True)
+    for key, entry in detail.items():
+        _write(dir_path / f"{key}.json", entry)

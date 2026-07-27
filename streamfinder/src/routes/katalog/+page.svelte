@@ -75,7 +75,7 @@
 	// ── Modal state ───────────────────────────────────────────────────────────
 	let modalTitle = $state<TitleDetail | null>(null);
 	let modalLoading = $state(false);
-	let detailCache: Record<string, TitleDetail> | null = null;
+	const detailCache = new Map<string, TitleDetail>();
 
 	// ── Crew lazy loading ────────────────────────────────────────────────────
 	let crewItems = $state<CrewEntry[]>([]);
@@ -312,13 +312,13 @@
 	async function openModal(t: TitleIndex) {
 		modalLoading = true;
 		modalTitle = null;
+		const key = `${t.id}-${t.slug}`;
 		try {
-			if (!detailCache) {
-				const res = await fetch(`${base}/data/titles_detail.json`);
-				detailCache = await res.json();
+			if (!detailCache.has(key)) {
+				const res = await fetch(`${base}/data/detail/${key}.json`);
+				if (res.ok) detailCache.set(key, await res.json());
 			}
-			const key = `${t.id}-${t.slug}`;
-			modalTitle = detailCache![key] ?? {
+			modalTitle = detailCache.get(key) ?? {
 				...t,
 				plot: null, backdrop: null, trailer_youtube_id: null, age_rating: null,
 				directors: [], actors: [], screenwriters: [], cinematographers: [], composers: [],

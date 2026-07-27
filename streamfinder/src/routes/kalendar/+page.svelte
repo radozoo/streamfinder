@@ -333,7 +333,7 @@
 	// ── Modal ─────────────────────────────────────────────────────────────────
 	let modalTitle = $state<TitleDetail | null>(null);
 	let modalLoading = $state(false);
-	let detailCache = $state<Record<string, TitleDetail> | null>(null);
+	const detailCache = new Map<string, TitleDetail>();
 
 	function emptyDetail(t: TitleIndex): TitleDetail {
 		return {
@@ -355,9 +355,13 @@
 	async function openModal(t: TitleIndex) {
 		modalLoading = true;
 		modalTitle = null;
+		const key = `${t.id}-${t.slug}`;
 		try {
-			detailCache ??= await (await fetch(`${base}/data/titles_detail.json`)).json();
-			modalTitle = detailCache![`${t.id}-${t.slug}`] ?? emptyDetail(t);
+			if (!detailCache.has(key)) {
+				const res = await fetch(`${base}/data/detail/${key}.json`);
+				if (res.ok) detailCache.set(key, await res.json());
+			}
+			modalTitle = detailCache.get(key) ?? emptyDetail(t);
 		} catch {
 			modalTitle = emptyDetail(t);
 		} finally {
