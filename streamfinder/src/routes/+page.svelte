@@ -426,35 +426,41 @@
 		right: 1rem;
 	}
 
-	/* Segmented progress track — one bar per slide, active one fills as a timer */
+	/* Dot indicator track — centered, quiet; the active dot fills as a timer */
 	.hero-progress {
 		position: absolute;
 		bottom: 1.25rem;
-		left: 2.5rem;
+		left: 50%;
+		transform: translateX(-50%);
 		z-index: 3;
 		display: flex;
+		align-items: center;
 		gap: 0.5rem;
 	}
 
 	.seg {
 		position: relative;
-		width: 40px;
-		height: 4px;
+		width: 6px;
+		height: 6px;
 		padding: 0;
 		border: none;
-		border-radius: 2px;
-		background: rgba(255, 255, 255, 0.2);
+		border-radius: 50%;
+		background: rgba(255, 255, 255, 0.3);
 		cursor: pointer;
 		overflow: hidden;
-		transition: background 0.2s;
+		transition: background 0.2s, transform 0.2s;
 	}
 
 	.seg:hover {
-		background: rgba(255, 255, 255, 0.34);
+		background: rgba(255, 255, 255, 0.45);
 	}
 
 	.seg.done {
-		background: rgba(255, 255, 255, 0.5);
+		background: rgba(255, 255, 255, 0.45);
+	}
+
+	.seg.active {
+		transform: scale(1.3);
 	}
 
 	.seg:focus-visible {
@@ -465,9 +471,9 @@
 	.seg-fill {
 		position: absolute;
 		inset: 0;
+		border-radius: 50%;
 		background: var(--amber);
-		transform-origin: left;
-		transform: scaleX(0);
+		transform: scale(0);
 		animation: seg-fill linear forwards;
 	}
 
@@ -477,10 +483,10 @@
 
 	@keyframes seg-fill {
 		from {
-			transform: scaleX(0);
+			transform: scale(0);
 		}
 		to {
-			transform: scaleX(1);
+			transform: scale(1);
 		}
 	}
 
