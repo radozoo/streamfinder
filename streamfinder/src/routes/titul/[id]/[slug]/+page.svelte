@@ -52,9 +52,9 @@
 	<div class="detail-top">
 		<!-- Poster -->
 		{#if t.poster}
-			<img class="detail-poster" src={t.poster} alt={t.title} />
+			<img class="detail-poster" class:overlap={!!t.backdrop} src={t.poster} alt={t.title} />
 		{:else}
-			<div class="detail-poster-placeholder">{t.title}</div>
+			<div class="detail-poster-placeholder" class:overlap={!!t.backdrop}>{t.title}</div>
 		{/if}
 
 		<!-- Main info -->
@@ -66,6 +66,7 @@
 					<a href="{base}/katalog?genre={t.genres[0]}">{t.genres[0]}</a>
 					<span>›</span>
 				{/if}
+				<span class="breadcrumb-current">{t.title}</span>
 			</div>
 
 			<h1 class="detail-title">{t.title}</h1>
@@ -270,7 +271,6 @@
 		min-width: 180px;
 		border-radius: var(--radius);
 		object-fit: cover;
-		margin-top: -100px;
 		position: relative;
 		z-index: 1;
 		box-shadow: 0 12px 40px rgba(0,0,0,0.6);
@@ -289,6 +289,13 @@
 		font-size: 0.8rem;
 		padding: 1rem;
 		text-align: center;
+	}
+
+	/* Only pull the poster up to overlap the backdrop hero when one is actually
+	   rendered — without it there is no 380px hero to compensate for the
+	   negative margin, which used to clip the poster's top under the nav. */
+	.detail-poster.overlap,
+	.detail-poster-placeholder.overlap {
 		margin-top: -100px;
 	}
 
@@ -303,6 +310,12 @@
 
 	.breadcrumb a {
 		color: var(--amber);
+	}
+
+	.breadcrumb-current {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.detail-title {
