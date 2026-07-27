@@ -440,8 +440,8 @@
 
 	.seg {
 		position: relative;
-		width: 6px;
-		height: 6px;
+		width: 9px;
+		height: 9px;
 		padding: 0;
 		border: none;
 		border-radius: 50%;
