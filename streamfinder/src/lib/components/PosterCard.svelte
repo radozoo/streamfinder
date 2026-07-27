@@ -2,6 +2,7 @@
 	import type { TitleIndex } from '$lib/types';
 	import { base } from '$app/paths';
 	import { platformColor } from '$lib/platforms';
+	import { ratingColor } from '$lib/format';
 
 	let {
 		title,
@@ -88,7 +89,7 @@
 		{/if}
 		<div class="card-meta">
 			{#if title.rating !== null}
-				<span class="card-rating">{title.rating} %</span>
+				<span class="card-rating" style="color: {ratingColor(title.rating)}">{title.rating} %</span>
 			{:else if title.inherited_rating != null}
 				<span
 					class="card-rating inherited"

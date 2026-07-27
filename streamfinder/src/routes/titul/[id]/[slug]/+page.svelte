@@ -2,16 +2,23 @@
 	import type { PageData } from './$types';
 	import { base } from '$app/paths';
 	import { platformSearchUrl } from '$lib/platforms';
+	import {
+		ratingColor,
+		shapeText as buildShapeText,
+		buildSeasons,
+		dotPos,
+		shortDate,
+		cadenceLabel
+	} from '$lib/format';
 
 	let { data }: { data: PageData } = $props();
 	let t = $derived(data.title);
 
-	function ratingColor(r: number | null) {
-		if (!r) return 'var(--text-muted)';
-		if (r >= 70) return '#4caf50';
-		if (r >= 50) return 'var(--amber)';
-		return '#e57373';
-	}
+	// Serial shape ("2 série · 18 epizod") + availability timeline — same
+	// derivation as TitleModal, so a series describes itself identically
+	// whether opened from a card modal or its own page.
+	let shapeText = $derived.by(() => buildShapeText(t));
+	let seasons = $derived.by(() => buildSeasons(t.episodes));
 
 	function formatRuntime(min: number | null) {
 		if (!min) return null;
@@ -96,6 +103,13 @@
 				{/if}
 			</div>
 
+			{#if shapeText}
+				<div class="shape-row">
+					<span class="shape-text">{shapeText}</span>
+					{#if t.is_running}<span class="shape-live">● běží</span>{/if}
+				</div>
+			{/if}
+
 			<!-- Genres + countries -->
 			<div class="tag-row">
 				{#each t.genres as g}
@@ -142,6 +156,38 @@
 
 	<!-- Crew section -->
 	<div class="detail-sections">
+		{#if seasons.length}
+			<section class="timeline-section">
+				<div class="tl-head">
+					<h2 class="section-title">Časová osa dostupnosti</h2>
+					{#if cadenceLabel(t.cadence_days)}
+						<span class="tl-cad">{cadenceLabel(t.cadence_days)}</span>
+					{/if}
+				</div>
+				{#each seasons as s}
+					<div class="tl-season">
+						<div class="tl-slabel">
+							<span class="tl-sname">{s.season ? `SÉRIE ${s.season}` : 'EPIZODY'}</span>
+							<span class="tl-dates">
+								{shortDate(s.first)}–{shortDate(s.last)} ·
+								{s.eps.length} {s.eps.length === 1 ? 'epizoda' : s.eps.length < 5 ? 'epizody' : 'epizod'}
+							</span>
+						</div>
+						<div class="tl-track">
+							<div class="tl-line"></div>
+							{#each s.eps as e}
+								<span
+									class="tl-dot"
+									style="left: {dotPos(e, s.first, s.last)}%"
+									title={`${e.title} · ${shortDate(e.vod_date)}`}
+								></span>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</section>
+		{/if}
+
 		{#if t.directors.length || t.actors.length || t.screenwriters.length || t.cinematographers.length || t.composers.length}
 			<section class="crew-section">
 				<h2 class="section-title">Tvůrci</h2>
@@ -247,6 +293,12 @@
 	}
 
 	.detail-page {
+		/* .page-container's 1400px suits grid pages (Katalog); this page is a
+		   text column that never gets close to that width. Cap and center it
+		   locally so the leftover space reads as a deliberate margin on both
+		   sides, not a lopsided gap on the right. */
+		max-width: 1100px;
+		margin: 0 auto;
 		padding-top: 1.5rem;
 	}
 
@@ -422,6 +474,97 @@
 		font-size: 0.8rem;
 		color: var(--text-muted);
 		margin-bottom: 0.5rem;
+	}
+
+	/* Serial shape line — same treatment as the card modal */
+	.shape-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin-bottom: 1rem;
+	}
+
+	.shape-text {
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: var(--amber);
+	}
+
+	.shape-live {
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		padding: 2px 8px;
+		border-radius: 999px;
+		background: rgba(74, 222, 128, 0.16);
+		color: #4ade80;
+		border: 1px solid rgba(74, 222, 128, 0.35);
+	}
+
+	/* Release timeline */
+	.tl-head {
+		display: flex;
+		align-items: baseline;
+		gap: 0.6rem;
+		margin-bottom: 1rem;
+	}
+
+	.tl-cad {
+		margin-left: auto;
+		font-size: 0.75rem;
+		color: #4ade80;
+	}
+
+	.tl-season {
+		margin-bottom: 1.1rem;
+	}
+
+	.tl-slabel {
+		display: flex;
+		align-items: baseline;
+		gap: 0.6rem;
+		margin-bottom: 0.6rem;
+		flex-wrap: wrap;
+	}
+
+	.tl-sname {
+		font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+		font-size: 0.75rem;
+		color: var(--amber);
+		font-weight: 700;
+	}
+
+	.tl-dates {
+		font-size: 0.75rem;
+		color: var(--text-muted);
+	}
+
+	.tl-track {
+		position: relative;
+		height: 22px;
+	}
+
+	.tl-line {
+		position: absolute;
+		top: 10px;
+		left: 0;
+		right: 0;
+		height: 2px;
+		background: var(--navy-500);
+		border-radius: 2px;
+	}
+
+	.tl-dot {
+		position: absolute;
+		top: 5px;
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		background: var(--amber);
+		transform: translateX(-50%);
+		border: 2px solid var(--navy-800);
+		cursor: help;
 	}
 
 	.csfd-link {

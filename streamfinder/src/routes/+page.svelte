@@ -16,10 +16,7 @@
 	}
 
 	function ratingClass(r: number | null) {
-		if (!r) return '';
-		if (r >= 75) return 'rating-great';
-		if (r >= 60) return 'rating-good';
-		return 'rating-avg';
+		return r ? 'rating-good' : '';
 	}
 
 	// ── Hero carousel ────────────────────────────────────────────────────

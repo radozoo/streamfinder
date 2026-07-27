@@ -199,10 +199,8 @@ a {
 	pointer-events: none;
 }
 
-/* Rating color classes */
-.rating-great { color: #4ade80; }
+/* Rating color — always amber, regardless of score */
 .rating-good { color: var(--amber); }
-.rating-avg { color: var(--text-secondary); }
 
 /* Section heading */
 .section-title {

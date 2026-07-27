@@ -1,6 +1,7 @@
 <script lang="ts">
-	import type { TitleDetail, EpisodeRelease } from '$lib/types';
+	import type { TitleDetail } from '$lib/types';
 	import { platformSearchUrl } from '$lib/platforms';
+	import { ratingColor, shapeText as buildShapeText, buildSeasons, dotPos, shortDate, cadenceLabel } from '$lib/format';
 
 	interface Props {
 		title: TitleDetail | null;
@@ -21,80 +22,11 @@
 		actorsExpanded = false;
 	});
 
-	// Czech plural: 1 → one, 2–4 → few, 5+ → many
-	function czPlural(n: number, one: string, few: string, many: string): string {
-		if (n === 1) return one;
-		if (n >= 2 && n <= 4) return few;
-		return many;
-	}
-
 	// Serial shape line: "2 série · 18 epizod"
-	let shapeText = $derived.by(() => {
-		if (!title) return null;
-		const parts: string[] = [];
-		if (title.season_count && title.season_count > 1) {
-			parts.push(`${title.season_count} ${czPlural(title.season_count, 'série', 'série', 'sérií')}`);
-		}
-		if (title.episode_count) {
-			const w: [string, string, string] =
-				title.title_type === 'pořad' ? ['díl', 'díly', 'dílů'] : ['epizoda', 'epizody', 'epizod'];
-			parts.push(`${title.episode_count} ${czPlural(title.episode_count, w[0], w[1], w[2])}`);
-		}
-		return parts.join(' · ') || null;
-	});
+	let shapeText = $derived.by(() => buildShapeText(title));
 
 	// ── Release timeline (top-level serials) ──────────────────────────────────
-	interface SeasonGroup {
-		season: number | null;
-		eps: EpisodeRelease[];
-		first: string | null;
-		last: string | null;
-	}
-
-	let seasons = $derived.by((): SeasonGroup[] => {
-		const eps = title?.episodes;
-		if (!eps || !eps.length) return [];
-		const map = new Map<number, EpisodeRelease[]>();
-		for (const e of eps) {
-			const s = e.season_no ?? 0;
-			if (!map.has(s)) map.set(s, []);
-			map.get(s)!.push(e);
-		}
-		return [...map.entries()]
-			.sort((a, b) => a[0] - b[0])
-			.map(([season, list]) => {
-				const dates = list.map((e) => e.vod_date).filter((d): d is string => !!d).sort();
-				return { season: season || null, eps: list, first: dates[0] ?? null, last: dates.at(-1) ?? null };
-			});
-	});
-
-	function dotPos(e: EpisodeRelease, first: string | null, last: string | null): number {
-		if (!e.vod_date || !first || !last || first === last) return 50;
-		const t0 = +new Date(first), t1 = +new Date(last), t = +new Date(e.vod_date);
-		return Math.max(0, Math.min(100, ((t - t0) / (t1 - t0)) * 100));
-	}
-
-	function shortDate(d: string | null): string {
-		if (!d) return '';
-		const [, mo, day] = d.split('-');
-		return `${Number(day)}. ${Number(mo)}.`;
-	}
-
-	function cadenceLabel(days: number | null | undefined): string | null {
-		if (days == null) return null;
-		if (days <= 0) return 'celá séria naraz';
-		if (days === 1) return 'denně';
-		if (days <= 4) return `ob ${days} dny`;
-		if (days <= 10) return 'týdně';
-		return `ob ~${days} dní`;
-	}
-
-	function ratingColor(r: number | null) {
-		if (!r) return 'var(--text-muted)';
-		if (r >= 70) return '#4caf50';
-		if (r >= 50) return 'var(--amber)';
-		return '#e57373';
-	}
+	let seasons = $derived.by(() => buildSeasons(title?.episodes));
 
 	function formatDate(d: string | null) {
 		if (!d) return null;

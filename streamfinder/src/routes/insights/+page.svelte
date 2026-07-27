@@ -549,7 +549,7 @@
 	.gem-rating {
 		font-size: 0.75rem;
 		font-weight: 700;
-		color: #4caf50;
+		color: var(--amber);
 	}
 
 	.gem-year {
