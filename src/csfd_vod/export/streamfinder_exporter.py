@@ -54,15 +54,31 @@ def _root_posters(titles: list[dict], tmdb_map: dict) -> dict[int, str]:
     }
 
 
+# ČSFD's own page text for a title's distributor/platform drifts across a real
+# rebrand (HBO Max → Max → HBO Max again; ITV Hub → ITVX) or between the channel
+# and its app name (Channel 4 vs. its "All 4" app) — different pages scraped at
+# different times end up with different spellings for the same service. Verified
+# by title-level overlap: e.g. 86 titles carried BOTH "HBO Max" and "Max" with no
+# clean year split, so this is ČSFD's own inconsistency, not two real platforms.
+# Canonical name chosen by current volume + recency in our data.
+_PLATFORM_ALIASES = {
+    "Max": "HBO Max",
+    "HBO GO": "HBO Max",
+    "HBO Nordic": "HBO Max",
+    "ITV Hub": "ITVX",
+    "All 4": "Channel 4",
+}
+
+
 # Show the primary streaming service first; Czech IPTV re-streamers
 # (SledovaniTV, Lepší.TV, Telly) rank last so they never mask HBO Max/Netflix/etc.
 _PLATFORM_PRIORITY = {
     name: i
     for i, name in enumerate([
-        "Netflix", "HBO Max", "Max", "Disney+", "Apple TV+", "Apple TV",
+        "Netflix", "HBO Max", "Disney+", "Apple TV+", "Apple TV",
         "Prime Video", "Prime", "Paramount+", "SkyShowtime", "Crunchyroll",
         "Canal+", "Hulu", "Peacock", "Showtime", "AMC+", "MGM+", "Discovery+",
-        "BBC iPlayer", "ITVX", "Acorn TV", "Movistar+", "Viaplay", "WOW Presents Plus",
+        "BBC iPlayer", "ITVX", "Channel 4", "Acorn TV", "Movistar+", "Viaplay", "WOW Presents Plus",
         "prima+", "Voyo", "YouTube", "YouTube Movies", "YouTube Premium",
         "Oneplay", "iVysílání", "Stream.cz", "Televize Seznam", "MALL.TV", "JOJ Play",
         "Rakuten.tv", "DAFilms", "KVIFF.TV", "Telly", "SledovaniTV", "Lepší.TV",
@@ -294,10 +310,18 @@ class StreamfinderExporter:
         it is dropped here to keep cards, filters and detail clean.
         """
         result: dict[int, list[dict]] = {}
+        seen: dict[int, set[str]] = {}
         for row in session.execute(text("SELECT title_id, vod_platform, vod_url FROM csfd_vod.dim_vods")):
             if row[1] == "VOD":
                 continue
-            result.setdefault(row[0], []).append({"platform": row[1], "url": row[2]})
+            title_id = row[0]
+            platform = _PLATFORM_ALIASES.get(row[1], row[1])
+            # A title can carry both spellings of the same service (e.g. "HBO Max"
+            # and "Max") — collapse to one entry per canonical name per title.
+            if platform in seen.setdefault(title_id, set()):
+                continue
+            seen[title_id].add(platform)
+            result.setdefault(title_id, []).append({"platform": platform, "url": row[2]})
         return result
 
     def _load_reviews(self, session: Session) -> dict[int, list[dict]]:
