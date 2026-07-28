@@ -21,7 +21,6 @@ const BRAND: Record<string, string> = {
 	'Acorn TV': '#2e7d32',
 	'Movistar+': '#019df4',
 	Viaplay: '#e0001a',
-	Voyo: '#e50914',
 	Crunchyroll: '#f47521',
 	'prima+': '#e4002b',
 	YouTube: '#ff0000',

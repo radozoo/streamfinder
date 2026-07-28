@@ -67,6 +67,7 @@ _PLATFORM_ALIASES = {
     "HBO Nordic": "HBO Max",
     "ITV Hub": "ITVX",
     "All 4": "Channel 4",
+    "Voyo": "Oneplay",
 }
 
 
@@ -79,7 +80,7 @@ _PLATFORM_PRIORITY = {
         "Prime Video", "Prime", "Paramount+", "SkyShowtime", "Crunchyroll",
         "Canal+", "Hulu", "Peacock", "Showtime", "AMC+", "MGM+", "Discovery+",
         "BBC iPlayer", "ITVX", "Channel 4", "Acorn TV", "Movistar+", "Viaplay", "WOW Presents Plus",
-        "prima+", "Voyo", "YouTube", "YouTube Movies", "YouTube Premium",
+        "prima+", "YouTube", "YouTube Movies", "YouTube Premium",
         "Oneplay", "iVysílání", "Stream.cz", "Televize Seznam", "MALL.TV", "JOJ Play",
         "Rakuten.tv", "DAFilms", "KVIFF.TV", "Telly", "SledovaniTV", "Lepší.TV",
     ])
