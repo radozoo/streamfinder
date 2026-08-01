@@ -101,6 +101,62 @@ async function runRoute(route) {
 	check((await page.locator('h1.detail-title').count()) === 0, `${route}: Back leaves the detail page`);
 }
 
+// ── Multi-select facets ───────────────────────────────────────────────────────
+// A facet that accepts several values is only usable if the dropdown survives the
+// first pick. It did not: the panel is rendered as a DOM sibling of the dropdown, so
+// clicking a pill moved focus "outside" and closed it, and every multi-select facet
+// behaved as single-select unless you reopened it each time.
+console.log('\nmulti-select facets');
+
+async function openPanel(label) {
+	const trigger = page.locator('button.filter-trigger').filter({ hasText: label }).first();
+	for (let i = 0; i < 4; i++) {
+		if ((await trigger.getAttribute('aria-expanded')) === 'true') return true;
+		await trigger.click();
+		await page.waitForTimeout(350);
+	}
+	return false;
+}
+
+// Click without moving the pointer out of the panel, the way a person does.
+async function clickPill(i) {
+	const box = await page.locator('.filter-panel button.pill').nth(i).boundingBox();
+	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+	await page.mouse.down();
+	await page.mouse.up();
+	await page.waitForTimeout(800);
+}
+
+for (const [route, label, param] of [
+	['katalog', 'Typ', 'type'],
+	['katalog', 'Žánr', 'genre'],
+	['kalendar', 'Typ', 'type']
+]) {
+	try {
+		await page.goto(`${ORIGIN}/${route}`, { waitUntil: 'domcontentloaded' });
+		await page.waitForSelector('a.poster-card');
+		await page.waitForTimeout(600);
+		await openPanel(label);
+		await clickPill(0);
+		const stillOpen = (await page.locator('.filter-panel button.pill').count()) > 0;
+		check(stillOpen, `${route}/${label}: panel stays open after the first pick`);
+		if (!stillOpen) continue;
+		await clickPill(1);
+		const url = decodeURIComponent(page.url());
+		check(
+			(url.match(new RegExp(`${param}=([^&]*)`))?.[1] ?? '').includes(','),
+			`${route}/${label}: two values reach the URL`,
+			url.replace(ORIGIN, '')
+		);
+		check(
+			(await page.locator('.filter-panel button.pill.active').count()) === 2,
+			`${route}/${label}: both pills read as selected`
+		);
+	} catch (e) {
+		check(false, `${route}/${label}: multi-select flow completed`, String(e).split('\n')[0]);
+	}
+}
+
 check(errors.length === 0, 'no uncaught errors', errors.join(' | ') || 'none');
 
 await browser.close();

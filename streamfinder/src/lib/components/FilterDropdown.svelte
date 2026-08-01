@@ -22,6 +22,9 @@
 	let pinned = $state(false);
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
 	let triggerEl = $state<HTMLButtonElement | null>(null);
+	// The panel is rendered as a DOM sibling (see below), so "is focus still
+	// inside this dropdown?" has to ask about both elements, not just the wrapper.
+	let panelEl = $state<HTMLElement | null>(null);
 	let panelTop = $state(0);
 	let panelLeft = $state(0);
 
@@ -83,9 +86,14 @@
 
 	function handleFocusOut(e: FocusEvent) {
 		const wrapper = e.currentTarget as HTMLElement;
-		// Only unpin if focus leaves the entire dropdown wrapper
+		// Only unpin if focus leaves the dropdown AND its panel. Checking the wrapper
+		// alone closed the panel on the first pill clicked: the panel lives outside the
+		// wrapper, so selecting anything in it counted as focus leaving. Every
+		// multi-select facet was effectively single-select — you had to reopen the
+		// dropdown for each additional value.
 		requestAnimationFrame(() => {
-			if (!wrapper.contains(document.activeElement)) {
+			const active = document.activeElement;
+			if (!wrapper.contains(active) && !panelEl?.contains(active)) {
 				pinned = false;
 				scheduleClose();
 			}
@@ -135,10 +143,12 @@
 	     the .filter-bar overflow-x:auto clipping context. -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
+		bind:this={panelEl}
 		class="filter-panel"
 		style="top: {panelTop}px; left: {panelLeft}px;"
 		onmouseenter={cancelClose}
 		onmouseleave={handleLeave}
+		onfocusin={handleFocusIn}
 	>
 		{@render children()}
 	</div>
