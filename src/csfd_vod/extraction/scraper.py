@@ -538,12 +538,22 @@ class VODScraper:
                         browser.close()
                     return None
 
-                # Wait for at least the title element, or timeout
+                # Wait for at least the title element, or timeout.
+                #
+                # A page without it is not a title page — it is a 404, a bot-check
+                # interstitial or a truncated response. Returning it anyway meant the
+                # caller cached an error page as a success, and `cache.has()` then
+                # made the URL permanently un-retryable: 566 titles sat missing from
+                # the catalog this way, every one of them under 10 KB while a real
+                # page is 150 KB+. Treat it as a failed scrape so it is retried.
                 try:
                     page.wait_for_selector(selector, timeout=5000)
                     logger.info("playwright_title_selector_found", selector=selector)
                 except Exception as e:
-                    logger.warning("title_selector_not_found_in_page", selector=selector, error=str(e))
+                    logger.warning("title_selector_not_found_in_page", selector=selector, error=str(e), url=title_url)
+                    if browser:
+                        browser.close()
+                    return None
 
                 # Wait a bit more for dynamic content to load
                 time.sleep(2)
