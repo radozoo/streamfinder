@@ -32,10 +32,25 @@ DEFAULT_DATA_DIR = Path("streamfinder/static/data")
 # Text fields shown to a user. Anything invisible or stray in these lands on screen.
 TEXT_FIELDS = ("title", "title_en", "slug")
 
-# Bidi isolates/embeddings and zero-width marks. ČSFD wraps some episode names in
+# Bidi isolates/embeddings and directional marks. ČSFD wraps some episode names in
 # U+2068/U+2069; invisible, but they break trimming, sorting and equality.
+# Mirrors csfd_vod.transformation.text — keep the two in step.
 # See: 2026-08-01-csfd-bidi-isolates-in-titles
-CONTROL_CHARS = re.compile(r"[​-‏  ‪-‮⁦-⁩﻿]")
+ALWAYS_INVISIBLE = re.compile(
+    r"[\u2066-\u2069\u202a-\u202e\u200e\u200f\u2028\u2029\ufeff]"
+)
+
+# Zero-width space/non-joiner/joiner: junk in Latin text, but MEANINGFUL in Indic
+# and Arabic scripts, where they control ligature and conjunct formation. Flag them
+# only in strings holding nothing from those scripts.
+ZERO_WIDTH = re.compile(r"[\u200b-\u200d]")
+COMPLEX_SCRIPT = re.compile(r"[\u0590-\u1cff\u1f00-\u1fff]")
+
+
+def _has_invisible(s: str) -> bool:
+    if ALWAYS_INVISIBLE.search(s):
+        return True
+    return bool(ZERO_WIDTH.search(s)) and not COMPLEX_SCRIPT.search(s)
 
 # Dangling child -> serial references. Backfilled by scripts/backfill_missing_roots.py;
 # a residue remains for serials whose ČSFD page is gone. Lower this as it shrinks,
@@ -71,7 +86,7 @@ def check_control_chars(titles: list) -> list[str]:
         (t.get("id"), f, t[f])
         for t in titles
         for f in TEXT_FIELDS
-        if isinstance(t.get(f), str) and CONTROL_CHARS.search(t[f])
+        if isinstance(t.get(f), str) and _has_invisible(t[f])
     ]
     if not bad:
         return []

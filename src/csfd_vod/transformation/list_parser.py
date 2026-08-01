@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Any
 from bs4 import BeautifulSoup
 
 from csfd_vod.logger import get_logger
+from csfd_vod.transformation.text import clean_text, split_services
 
 
 logger = get_logger(__name__)
@@ -101,7 +102,7 @@ class VODListParser:
             if "Distributor:" in text or "distributor:" in text.lower():
                 parts = text.split(":", 1)
                 if len(parts) == 2:
-                    entry["distributor"] = parts[1].strip() or None
+                    entry["distributor"] = clean_text(parts[1]) or None
                 break
 
         # VOD platforms — "/vod/{platform}/" links (Netflix, Disney+, …). This is the
@@ -109,17 +110,19 @@ class VODListParser:
         platforms = []
         for a in article.select("a[href*='/vod/']"):
             m = re.search(r"/vod/([^/?]+)/", a.get("href", ""))
-            name = a.get_text(strip=True)
-            if m and name and name not in platforms:
-                platforms.append(name)
+            # One link occasionally names two services ("Peacock /\n\t\t\tHulu").
+            for name in split_services(a.get_text(strip=True)):
+                if m and name not in platforms:
+                    platforms.append(name)
 
         # Fallback: some services (Paramount+, Hulu, Peacock…) have no ČSFD /vod page,
         # so no link — but the listing names them as the "Distributor". For a VOD
         # listing the distributor IS the streaming service, unless it's a theatrical one.
         if not platforms and entry.get("distributor"):
             dist = entry["distributor"]
-            if dist.lower() not in _NON_STREAMING_DISTRIBUTORS:
-                platforms.append(dist)
+            for name in split_services(dist):
+                if name.lower() not in _NON_STREAMING_DISTRIBUTORS:
+                    platforms.append(name)
 
         entry["platforms"] = platforms
 
