@@ -4,13 +4,15 @@
 	import { platformColor } from '$lib/platforms';
 	import { ratingColor } from '$lib/format';
 
+	// A card is always a link to the title's own page. It used to switch to a
+	// <button> opening a modal whenever an `onclick` was passed, which meant the
+	// same card behaved differently depending on which page it sat on — a detail
+	// page from the home rails, a modal from Katalóg and Kalendár.
 	let {
 		title,
-		onclick,
 		serialTitle
 	}: {
 		title: TitleIndex;
-		onclick?: (t: TitleIndex) => void;
 		/** In the Kalendár, the name of the serial this release belongs to. */
 		serialTitle?: string;
 	} = $props();
@@ -54,10 +56,6 @@
 	// and 1.4k season rows whose "name" is just "Serial- Season 2"). The S·E badge
 	// already places the release; the episode's own name belongs on the detail page.
 	let subLine = $derived(title.genres.slice(0, 2).join(' · ') || null);
-
-	function handleClick() {
-		if (onclick) onclick(title);
-	}
 </script>
 
 {#snippet cardBody()}
@@ -108,26 +106,11 @@
 	</div>
 {/snippet}
 
-{#if onclick}
-	<button class="poster-card" type="button" onclick={handleClick}>
-		{@render cardBody()}
-	</button>
-{:else}
-	<a href="{base}/titul/{title.id}/{title.slug}" class="poster-card">
-		{@render cardBody()}
-	</a>
-{/if}
+<a href="{base}/titul/{title.id}/{title.slug}" class="poster-card">
+	{@render cardBody()}
+</a>
 
 <style>
-	/* The card is a <button>; keep its layout reset but let the global
-	   .poster-card surface (background, border, shadow) show through. */
-	button.poster-card {
-		font: inherit;
-		color: inherit;
-		text-align: left;
-		width: 100%;
-	}
-
 	/* Categorical badges live on the poster; descriptive text lives below it
 	   (.poster-media box sizing is defined globally in app.css) */
 	.type-tag {

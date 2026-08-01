@@ -50,6 +50,10 @@ export interface TitleDetail extends TitleIndex {
 	reviews: Review[];
 	vods: Vod[];
 	episodes?: EpisodeRelease[]; // release timeline on top-level serials
+	// On an episode/season: how to reach the serial's own page. Carried here so the
+	// page needn't load the whole title index to resolve one slug.
+	root_title?: string | null;
+	root_slug?: string | null;
 }
 
 export interface EpisodeRelease {

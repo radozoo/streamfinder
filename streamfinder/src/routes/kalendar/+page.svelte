@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { untrack, tick } from 'svelte';
 	import type { PageData } from './$types';
-	import type { TitleIndex, TitleDetail, CrewEntry } from '$lib/types';
+	import type { TitleIndex, CrewEntry } from '$lib/types';
 	import PosterCard from '$lib/components/PosterCard.svelte';
-	import TitleModal from '$lib/components/TitleModal.svelte';
 	import FilterBar from '$lib/components/FilterBar.svelte';
 	import ActiveFilters from '$lib/components/ActiveFilters.svelte';
 	import { base } from '$app/paths';
@@ -330,56 +329,9 @@
 		el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
-	// ── Modal ─────────────────────────────────────────────────────────────────
-	let modalTitle = $state<TitleDetail | null>(null);
-	let modalLoading = $state(false);
-	const detailCache = new Map<string, TitleDetail>();
-
-	function emptyDetail(t: TitleIndex): TitleDetail {
-		return {
-			...t,
-			plot: null,
-			backdrop: null,
-			trailer_youtube_id: null,
-			age_rating: null,
-			directors: [],
-			actors: [],
-			screenwriters: [],
-			cinematographers: [],
-			composers: [],
-			reviews: [],
-			vods: []
-		};
-	}
-
-	async function openModal(t: TitleIndex) {
-		modalLoading = true;
-		modalTitle = null;
-		const key = `${t.id}-${t.slug}`;
-		try {
-			if (!detailCache.has(key)) {
-				const res = await fetch(`${base}/data/detail/${key}.json`);
-				if (res.ok) detailCache.set(key, await res.json());
-			}
-			modalTitle = detailCache.get(key) ?? emptyDetail(t);
-		} catch {
-			modalTitle = emptyDetail(t);
-		} finally {
-			modalLoading = false;
-		}
-	}
-
-	function closeModal() {
-		modalTitle = null;
-		modalLoading = false;
-	}
-
-	// Resolve the serial a release belongs to (for card context + modal jump).
+	// Resolve the serial a release belongs to, so an episode card leads with the
+	// show's name rather than its own (often unusable) episode title.
 	let byId = $derived(new Map(data.titles.map((t) => [t.id, t])));
-	function openById(id: number) {
-		const e = byId.get(id);
-		if (e) openModal(e);
-	}
 </script>
 
 <div class="page-container">
@@ -481,7 +433,6 @@
 								serialTitle={title.root_title_id != null
 									? byId.get(title.root_title_id)?.title
 									: undefined}
-								onclick={openModal}
 							/>
 						{/each}
 					</div>
@@ -529,7 +480,6 @@
 	</div>
 </div>
 
-<TitleModal title={modalTitle} loading={modalLoading} onclose={closeModal} onopentitle={openById} />
 
 <style>
 	.kal-header {

@@ -1,8 +1,7 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import type { TitleIndex, TitleDetail, CrewEntry } from '$lib/types';
+	import type { TitleIndex, CrewEntry } from '$lib/types';
 	import PosterCard from '$lib/components/PosterCard.svelte';
-	import TitleModal from '$lib/components/TitleModal.svelte';
 	import FilterBar from '$lib/components/FilterBar.svelte';
 	import ActiveFilters from '$lib/components/ActiveFilters.svelte';
 	import PillGrid from '$lib/components/PillGrid.svelte';
@@ -71,11 +70,6 @@
 
 	// ── Mobile filter sheet ──────────────────────────────────────────────────
 	let filterPanelOpen = $state(false);
-
-	// ── Modal state ───────────────────────────────────────────────────────────
-	let modalTitle = $state<TitleDetail | null>(null);
-	let modalLoading = $state(false);
-	const detailCache = new Map<string, TitleDetail>();
 
 	// ── Crew lazy loading ────────────────────────────────────────────────────
 	let crewItems = $state<CrewEntry[]>([]);
@@ -308,46 +302,6 @@
 		else if (category === 'Přidáno') recencyDays = 0;
 	}
 
-	// ── Modal ─────────────────────────────────────────────────────────────────
-	async function openModal(t: TitleIndex) {
-		modalLoading = true;
-		modalTitle = null;
-		const key = `${t.id}-${t.slug}`;
-		try {
-			if (!detailCache.has(key)) {
-				const res = await fetch(`${base}/data/detail/${key}.json`);
-				if (res.ok) detailCache.set(key, await res.json());
-			}
-			modalTitle = detailCache.get(key) ?? {
-				...t,
-				plot: null, backdrop: null, trailer_youtube_id: null, age_rating: null,
-				directors: [], actors: [], screenwriters: [], cinematographers: [], composers: [],
-				reviews: [], vods: []
-			};
-		} catch {
-			modalTitle = {
-				...t,
-				plot: null, backdrop: null, trailer_youtube_id: null, age_rating: null,
-				directors: [], actors: [], screenwriters: [], cinematographers: [], composers: [],
-				reviews: [], vods: []
-			};
-		} finally {
-			modalLoading = false;
-		}
-	}
-
-	function closeModal() {
-		modalTitle = null;
-		modalLoading = false;
-	}
-
-	// Open the top-level work behind a release (modal "jump to serial").
-	let byId = $derived(new Map(data.titles.map((t) => [t.id, t])));
-	function openById(id: number) {
-		const e = byId.get(id);
-		if (e) openModal(e);
-	}
-
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') filterPanelOpen = false;
 	}
@@ -432,7 +386,7 @@
 		{:else}
 			<div class="poster-grid">
 				{#each displayedTitles as title (title.id)}
-					<PosterCard {title} onclick={openModal} />
+					<PosterCard {title} />
 				{/each}
 			</div>
 
@@ -591,7 +545,6 @@
 	</div>
 {/if}
 
-<TitleModal title={modalTitle} loading={modalLoading} onclose={closeModal} onopentitle={openById} />
 
 <style>
 	.katalog-header {

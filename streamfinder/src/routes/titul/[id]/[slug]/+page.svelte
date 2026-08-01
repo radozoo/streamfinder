@@ -20,6 +20,15 @@
 	let shapeText = $derived.by(() => buildShapeText(t));
 	let seasons = $derived.by(() => buildSeasons(t.episodes));
 
+	// An episode or season is a release, not a work — always offer the way back up
+	// to the serial. Null on top-level works, and on children exported before
+	// root_slug existed.
+	let serialHref = $derived(
+		t.is_toplevel === false && t.root_title_id != null && t.root_slug
+			? `${base}/titul/${t.root_title_id}/${t.root_slug}`
+			: null
+	);
+
 	function formatRuntime(min: number | null) {
 		if (!min) return null;
 		const h = Math.floor(min / 60);
@@ -69,7 +78,10 @@
 			<div class="breadcrumb">
 				<a href="{base}/katalog">Katalog</a>
 				<span>›</span>
-				{#if t.genres.length}
+				{#if serialHref}
+					<a href={serialHref}>{t.root_title}</a>
+					<span>›</span>
+				{:else if t.genres.length}
 					<a href="{base}/katalog?genre={t.genres[0]}">{t.genres[0]}</a>
 					<span>›</span>
 				{/if}
@@ -108,6 +120,13 @@
 					<span class="shape-text">{shapeText}</span>
 					{#if t.is_running}<span class="shape-live">● běží</span>{/if}
 				</div>
+			{/if}
+
+			{#if serialHref}
+				<a class="jump-serial" href={serialHref}>
+					<span class="jump-label">Součást seriálu</span>
+					<span class="jump-cta">Zobrazit seriál →</span>
+				</a>
 			{/if}
 
 			<!-- Genres + countries -->
@@ -482,6 +501,38 @@
 		align-items: center;
 		gap: 0.6rem;
 		margin-bottom: 1rem;
+	}
+
+	/* Way back up from a release to its work. Was a button in the modal; the same
+	   affordance is a plain link now that everything navigates. */
+	.jump-serial {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		max-width: 26rem;
+		margin: 0 0 1rem;
+		padding: 0.6rem 0.9rem;
+		background: rgba(245, 166, 35, 0.08);
+		border: 1px solid rgba(245, 166, 35, 0.25);
+		border-radius: var(--radius-sm);
+		transition: background 0.15s;
+	}
+
+	.jump-serial:hover {
+		background: rgba(245, 166, 35, 0.14);
+	}
+
+	.jump-label {
+		font-size: 0.8rem;
+		color: var(--text-secondary);
+	}
+
+	.jump-cta {
+		font-size: 0.85rem;
+		font-weight: 700;
+		color: var(--amber);
+		white-space: nowrap;
 	}
 
 	.shape-text {

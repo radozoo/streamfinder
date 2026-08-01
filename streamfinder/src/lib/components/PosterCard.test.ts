@@ -176,3 +176,43 @@ describe('missing data degrades quietly', () => {
 		expect(container.querySelector('.live-tag')).not.toBeNull();
 	});
 });
+
+describe('a card is always a link to the title page', () => {
+	/**
+	 * The card used to render a <button> opening a modal whenever the page passed an
+	 * `onclick`, and an <a> otherwise. The same card therefore behaved differently
+	 * depending on where it sat: the home rails navigated, Katalóg and Kalendár
+	 * opened a popup. These assert the single behaviour, and that the destination is
+	 * the title's own page in every shape — including releases, which resolve to the
+	 * episode's page rather than the serial's.
+	 */
+	test('renders an anchor, never a button', async () => {
+		const { container } = await render(PosterCard, { title: makeTitle() });
+		expect(container.querySelector('a.poster-card')).not.toBeNull();
+		expect(container.querySelector('button')).toBeNull();
+	});
+
+	test('href points at the title id and slug', async () => {
+		const { container } = await render(PosterCard, {
+			title: makeTitle({ id: 42, slug: 'duna-2021' })
+		});
+		expect(container.querySelector('a.poster-card')?.getAttribute('href')).toContain(
+			'/titul/42/duna-2021'
+		);
+	});
+
+	test('an episode links to its own page, not its serial', async () => {
+		const { container } = await render(PosterCard, {
+			title: makeTitle({
+				id: 900,
+				slug: 'epizoda-5-2024',
+				is_toplevel: false,
+				root_title_id: 7,
+				season_no: 2,
+				episode_no: 5
+			}),
+			serialTitle: 'Serial'
+		});
+		expect(container.querySelector('a.poster-card')?.getAttribute('href')).toContain('/titul/900/');
+	});
+});

@@ -641,6 +641,14 @@ class StreamfinderExporter:
         """Full detail dict keyed by '{title_id}-{slug}'."""
         root_poster = _root_posters(titles, tmdb_map)
         root_vods = _root_vods(titles, vods_map)
+        # An episode's page links back to its serial, and the route needs the slug —
+        # root_title_id alone would force the page to load the whole title index just
+        # to resolve one name.
+        root_ref = {
+            t["root_id"]: (t["title"], _slug(t["title"], t["year"]))
+            for t in titles
+            if t["root_id"] is not None and t["root_id"] == t["csfd_id"]
+        }
         detail: dict[str, dict] = {}
         for t in titles:
             tid = t["title_id"]
@@ -692,6 +700,8 @@ class StreamfinderExporter:
                 # hierarchy — Work vs. Release
                 "root_id": rid,
                 "root_title_id": root_title_id.get(rid) if not is_toplevel else None,
+                "root_title": root_ref.get(rid, (None, None))[0] if not is_toplevel else None,
+                "root_slug": root_ref.get(rid, (None, None))[1] if not is_toplevel else None,
                 "is_toplevel": is_toplevel,
                 "season_no": t["season_no"],
                 "episode_no": t["episode_no"],
