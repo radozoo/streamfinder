@@ -26,7 +26,9 @@ export const load: PageLoad = async ({ parent, url }) => {
 		initialPlatforms: get('platform')?.split(',').filter(Boolean) ?? [],
 		initialCountries: get('country')?.split(',').filter(Boolean) ?? [],
 		initialTags: get('tag')?.split(',').filter(Boolean) ?? [],
-		initialType: get('type') ?? '',
+		// Comma-separated like the other facets. A bare ?type=film still works,
+		// so links shared while this was single-select keep resolving.
+		initialTypes: get('type')?.split(',').filter(Boolean) ?? [],
 		initialYearFrom: parseNum(get('yearFrom')),
 		initialYearTo: parseNum(get('yearTo')),
 		initialRatingMin: parseNum(get('ratingMin')),

@@ -62,7 +62,7 @@
 	let selectedPlatforms = $state<string[]>(untrack(() => data.initialPlatforms ?? []));
 	let selectedCountries = $state<string[]>(untrack(() => data.initialCountries ?? []));
 	let selectedTags = $state<string[]>(untrack(() => data.initialTags ?? []));
-	let selectedType = $state<string>(untrack(() => data.initialType ?? ''));
+	let selectedTypes = $state<string[]>(untrack(() => data.initialTypes ?? []));
 	let selectedCrew = $state<string[]>(untrack(() => data.initialCrew ?? []));
 	let yearFrom = $state<number>(untrack(() => data.initialYearFrom ?? YEAR_MIN));
 	let yearTo = $state<number>(untrack(() => data.initialYearTo ?? YEAR_MAX));
@@ -112,7 +112,7 @@
 		if (selectedPlatforms.length) params.set('platform', selectedPlatforms.join(','));
 		if (selectedCountries.length) params.set('country', selectedCountries.join(','));
 		if (selectedTags.length) params.set('tag', selectedTags.join(','));
-		if (selectedType) params.set('type', selectedType);
+		if (selectedTypes.length) params.set('type', selectedTypes.join(','));
 		for (const name of selectedCrew) params.append('crew', name);
 		if (yearFrom > YEAR_MIN) params.set('yearFrom', String(yearFrom));
 		if (yearTo < YEAR_MAX) params.set('yearTo', String(yearTo));
@@ -176,7 +176,7 @@
 		platforms: selectedPlatforms,
 		countries: selectedCountries,
 		tags: selectedTags,
-		type: selectedType,
+		types: selectedTypes,
 		yearFrom,
 		yearTo,
 		ratingMin,
@@ -195,7 +195,8 @@
 			return false;
 		if (skip !== 'tag' && f.tags.length && !f.tags.some((tag) => t.tags.includes(tag)))
 			return false;
-		if (skip !== 'type' && f.type && t.title_type !== f.type) return false;
+		// OR within the dimension, like every other multi-select facet.
+		if (skip !== 'type' && f.types.length && !f.types.includes(t.title_type ?? '')) return false;
 		if (skip !== 'year' && f.yearFrom > YEAR_MIN && (t.year ?? 0) < f.yearFrom) return false;
 		if (skip !== 'year' && f.yearTo < YEAR_MAX && (t.year ?? 9999) > f.yearTo) return false;
 		if (skip !== 'rating' && f.ratingMin > 0 && (t.rating ?? t.inherited_rating ?? 0) < f.ratingMin)
@@ -306,7 +307,7 @@
 		selectedPlatforms = [];
 		selectedCountries = [];
 		selectedTags = [];
-		selectedType = '';
+		selectedTypes = [];
 		selectedCrew = [];
 		yearFrom = YEAR_MIN;
 		yearTo = YEAR_MAX;
@@ -320,7 +321,7 @@
 		for (const p of selectedPlatforms) chips.push({ category: 'Platforma', value: p });
 		for (const c of selectedCountries) chips.push({ category: 'Krajina', value: c });
 		for (const t of selectedTags) chips.push({ category: 'Tag', value: t });
-		if (selectedType) chips.push({ category: 'Typ', value: selectedType });
+		for (const ty of selectedTypes) chips.push({ category: 'Typ', value: ty });
 		for (const c of selectedCrew) chips.push({ category: 'Tvůrce', value: c });
 		if (yearFrom > YEAR_MIN || yearTo < YEAR_MAX) chips.push({ category: 'Rok', value: `${yearFrom}–${yearTo}` });
 		if (ratingMin > 0) chips.push({ category: 'Hodnocení', value: `${ratingMin}%+` });
@@ -332,7 +333,7 @@
 		else if (category === 'Platforma') selectedPlatforms = selectedPlatforms.filter((p) => p !== value);
 		else if (category === 'Krajina') selectedCountries = selectedCountries.filter((c) => c !== value);
 		else if (category === 'Tag') selectedTags = selectedTags.filter((t) => t !== value);
-		else if (category === 'Typ') selectedType = '';
+		else if (category === 'Typ') selectedTypes = selectedTypes.filter((ty) => ty !== value);
 		else if (category === 'Tvůrce') selectedCrew = selectedCrew.filter((c) => c !== value);
 		else if (category === 'Rok') { yearFrom = YEAR_MIN; yearTo = YEAR_MAX; }
 		else if (category === 'Hodnocení') ratingMin = 0;
@@ -407,7 +408,7 @@
 			{selectedPlatforms}
 			{selectedCountries}
 			{selectedTags}
-			{selectedType}
+			{selectedTypes}
 			{selectedCrew}
 			{yearFrom}
 			{yearTo}
@@ -418,7 +419,7 @@
 			onTogglePlatform={(name) => (selectedPlatforms = toggle(selectedPlatforms, name))}
 			onToggleCountry={(name) => (selectedCountries = toggle(selectedCountries, name))}
 			onToggleTag={(name) => (selectedTags = toggle(selectedTags, name))}
-			onToggleType={(name) => (selectedType = selectedType === name ? '' : name)}
+			onToggleType={(name) => (selectedTypes = toggle(selectedTypes, name))}
 			onSelectCrew={(name) => (selectedCrew = [...selectedCrew, name])}
 			onRemoveCrew={(name) => (selectedCrew = selectedCrew.filter((c) => c !== name))}
 			onYearChange={(from, to) => { yearFrom = from; yearTo = to; }}

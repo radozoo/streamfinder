@@ -22,7 +22,7 @@
 		selectedPlatforms,
 		selectedCountries,
 		selectedTags,
-		selectedType,
+		selectedTypes,
 		selectedCrew,
 		yearFrom,
 		yearTo,
@@ -57,7 +57,7 @@
 		selectedPlatforms: string[];
 		selectedCountries: string[];
 		selectedTags: string[];
-		selectedType: string;
+		selectedTypes: string[];
 		selectedCrew: string[];
 		yearFrom: number;
 		yearTo: number;
@@ -132,8 +132,8 @@
 		<PillGrid items={countries} selected={selectedCountries} onToggle={onToggleCountry} />
 	</FilterDropdown>
 
-	<FilterDropdown label="Typ" activeCount={selectedType ? 1 : 0}>
-		<PillGrid items={typeItems} selected={selectedType ? [selectedType] : []} onToggle={onToggleType} />
+	<FilterDropdown label="Typ" activeCount={selectedTypes.length}>
+		<PillGrid items={typeItems} selected={selectedTypes} onToggle={onToggleType} />
 	</FilterDropdown>
 
 	<FilterDropdown label="Tagy" activeCount={selectedTags.length}>
