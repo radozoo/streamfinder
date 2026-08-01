@@ -24,3 +24,4 @@ vite.config.ts.timestamp-*
 
 # Vitest browser-mode failure screenshots (transient run artifacts)
 __screenshots__/
+.vitest-attachments/
