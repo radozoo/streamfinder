@@ -14,6 +14,16 @@
 	let { data }: { data: PageData } = $props();
 	let t = $derived(data.title);
 
+	// A full ČSFD cast can run past a hundred names and bury everything under it.
+	const ACTOR_LIMIT = 20;
+	let actorsExpanded = $state(false);
+	// Collapse again when a different title loads — SvelteKit reuses this component
+	// between title pages, so the state would otherwise carry over.
+	$effect(() => {
+		t.id;
+		actorsExpanded = false;
+	});
+
 	// Serial shape ("2 série · 18 epizod") + availability timeline — same
 	// derivation as TitleModal, so a series describes itself identically
 	// whether opened from a card modal or its own page.
@@ -238,7 +248,18 @@
 					{#if t.actors.length}
 						<div class="crew-row">
 							<dt>Hrají</dt>
-							<dd>{t.actors.join(', ')}</dd>
+							<dd>
+								{(actorsExpanded ? t.actors : t.actors.slice(0, ACTOR_LIMIT)).join(', ')}
+								{#if t.actors.length > ACTOR_LIMIT}
+									<button
+										class="more-toggle"
+										type="button"
+										onclick={() => (actorsExpanded = !actorsExpanded)}
+									>
+										{actorsExpanded ? 'méně' : `+ ${t.actors.length - ACTOR_LIMIT} více`}
+									</button>
+								{/if}
+							</dd>
 						</div>
 					{/if}
 				</dl>
@@ -637,7 +658,20 @@
 	}
 
 	/* Crew */
-	.crew-section {}
+	.more-toggle {
+		background: none;
+		border: none;
+		padding: 0;
+		margin-left: 0.35rem;
+		color: var(--amber);
+		font-size: 0.8rem;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+
+	.more-toggle:hover {
+		text-decoration: underline;
+	}
 
 	.crew-list {
 		display: flex;
