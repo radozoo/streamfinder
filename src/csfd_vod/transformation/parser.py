@@ -12,6 +12,21 @@ from csfd_vod.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Bidi isolates/embeddings (U+2066–2069) and directional marks. ČSFD wraps some
+# episode names in them — invisible when rendered, but they are real characters
+# that survive .strip() and break equality checks downstream.
+_INVISIBLE_RE = re.compile(r"[⁦-⁩‎‏]")
+
+
+def _clean_text(value: str) -> str:
+    """Normalise scraped text: drop invisible marks, collapse runs of whitespace.
+
+    ČSFD's markup puts parts of a heading on separate indented lines, so a naive
+    get_text() carries newlines and tabs into the database and on to the screen.
+    Normalise once here rather than in every consumer.
+    """
+    return re.sub(r"\s+", " ", _INVISIBLE_RE.sub("", value)).strip()
+
 
 class VODTitleParser:
     """Parse VOD title details from HTML."""
@@ -74,17 +89,20 @@ class VODTitleParser:
         title_selector = self.selectors.get("title_page", {}).get("title_selector", ".film-header h1")
         title_elem = soup.select_one(title_selector)
         if title_elem:
-            data["title"] = title_elem.get_text(strip=True)
+            # The "(S03E05)" marker sits on its own indented line inside the <h1>.
+            # It is deliberately KEPT — the season/episode parsing below reads the
+            # numbers back out of the title — but it must not drag newlines with it.
+            data["title"] = _clean_text(title_elem.get_text(strip=True))
 
         # --- English/original title — .film-header-name .film-names li (first <li>) ---
         # Exclude <a> link text (e.g. "více" expand link appended by get_text)
         names_list = soup.select(".film-header-name .film-names li")
         if names_list:
             li = names_list[0]
-            title_en = "".join(
+            title_en = _clean_text("".join(
                 s for s in li.strings
                 if s.strip().lower() not in ("více", "more", "")
-            ).strip()
+            ))
             data["title_en"] = title_en or None
 
         # --- Year + Country + Runtime — all from .origin text ---
@@ -220,13 +238,18 @@ class VODTitleParser:
         platforms = []
         vod_url_map = {}
         for a in vod_links:
-            name = a.get_text(strip=True)
-            if name.lower() in ("více", "vod", ""):
-                continue
-            platforms.append(name)
+            # A link occasionally carries two services at once, split across lines
+            # ("Peacock /\n\t\t\tHulu"). Collapse the whitespace, then split on "/"
+            # so each service is its own platform — as one blob it matches no alias
+            # and no brand colour, and shows up as a bogus third "platform".
+            raw = _clean_text(a.get_text(strip=True))
             href = a.get("href", "")
-            if href and href.startswith("http"):
-                vod_url_map[name] = href
+            for name in (n.strip() for n in raw.split("/")):
+                if name.lower() in ("více", "vod", ""):
+                    continue
+                platforms.append(name)
+                if href and href.startswith("http"):
+                    vod_url_map[name] = href
         if platforms:
             data["vod_platforms"] = ", ".join(platforms)
         if vod_url_map:
@@ -265,7 +288,10 @@ class VODTitleParser:
         # /film/{ID}-slug/prehled/                → top-level work (root_id == csfd_id)
         # Each "/{id}-slug/" segment is an id: first = root serial, last = the entity
         # itself. (A plain "/film/(\d+)" would only see the first segment.)
-        seg_ids = re.findall(r"/(\d+)-[^/]*(?=/)", url)
+        # The slug is optional: a title whose name has no alphanumerics slugifies to
+        # nothing, giving a bare "/film/17338/" — the film "$". Requiring "-slug"
+        # left those rows with no hierarchy ids at all.
+        seg_ids = re.findall(r"/(\d+)(?:-[^/]*)?(?=/)", url)
         if seg_ids:
             data["root_id"] = int(seg_ids[0])
             data["csfd_id"] = int(seg_ids[-1])

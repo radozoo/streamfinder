@@ -29,7 +29,9 @@ SAMPLE_HTML = """
     <div class="origin">USA <span class="bullet"></span>
         <span>(1999) <span class="bullet"></span></span>2 h 16 min
     </div>
-    <div class="genres"><a href="/zaner/1/">Science Fiction</a> / <a href="/zaner/2/">Action</a></div>
+    <!-- Real CSFD markup: linked genres, <span class="bullet"> separators, and
+         secondary genres as BARE TEXT (no /zanry/ page). See rules §4. -->
+    <div class="genres"><a href="/zaner/1/">Science Fiction</a><span class="bullet">/</span><a href="/zaner/2/">Action</a><span class="bullet">/</span>Mysteriózní</div>
     <div>
         <h4>Režie:</h4>
         <a href="/tvurce/1/">Lana Wachowski</a>,
@@ -60,8 +62,11 @@ SAMPLE_HTML = """
     </div>
     <img src="/film/posters/12345.jpg" alt="poster" />
     <div class="film-vod-list">
-        <a href="/vod/netflix/">Netflix</a>
-        <a href="/vod/vice/">více</a>
+        <h3><a href="/vod/">VOD</a></h3>
+        <div class="box-film-vod-services">
+            <a href="/vod/netflix/">Netflix</a>
+            <a href="/vod/vice/">více</a>
+        </div>
     </div>
     <div class="updated-box-content-padding">Na VOD od 1.1.2020Netflix</div>
     <article class="article-review">
@@ -141,7 +146,8 @@ def test_parser_extracts_basic_fields(parser):
     assert result.director == "Lana Wachowski, Lilly Wachowski"
     assert result.actors == "Keanu Reeves, Laurence Fishburne"
     assert result.vod_platforms == "Netflix"
-    assert result.genres == "Science Fiction / Action"
+    # Bare-text genre included: dropping those loses a genre on ~34% of titles.
+    assert result.genres == "Science Fiction / Action / Mysteriózní"
 
 
 def test_parser_extracts_new_fields(parser):
@@ -176,11 +182,25 @@ def test_parser_rating_null_for_question_mark(parser):
     assert result.rating is None
 
 
-def test_parser_child_url_sets_parent_and_type(parser):
+def test_parser_child_url_sets_hierarchy_and_type(parser):
+    """A two-segment URL is a child: first id is the serial, last is the episode.
+
+    Supersedes the old parent_url assertion — hierarchy moved to root_id/csfd_id
+    and parent_url is deprecated (see docs/csfd-scraping-rules §3).
+    """
     url = "https://www.csfd.cz/film/99999/11111-pilot/prehled/"
     result = parser.parse(SAMPLE_HTML_CHILD_URL, url)
-    assert result.parent_url == "https://www.csfd.cz/film/99999/prehled/"
+    assert result.root_id == 99999
+    assert result.csfd_id == 11111
     assert result.title_type == "epizoda"
+
+
+def test_parser_slugless_url_still_gets_hierarchy(parser):
+    """A title whose name has no alphanumerics ("$") has an empty slug."""
+    url = "https://www.csfd.cz/film/17338/prehled/"
+    result = parser.parse(SAMPLE_HTML, url)
+    assert result.root_id == 17338
+    assert result.csfd_id == 17338
 
 
 def test_parser_handles_missing_title(parser):

@@ -128,6 +128,16 @@ children, collect both `<a>` text and bare `NavigableString` text, skip the
   from their serial (and serials inherit platforms from their children).
 - **Note:** stored VOD urls are often tunefind tracking redirects, not direct
   service URLs — they still resolve, so this is cosmetic.
+- **One link can hold two services.** A few `<a>`s wrap a pair across several
+  lines (`"Peacock /\n\t\t\tHulu"`). Collapse the whitespace and split on `/`, or
+  the blob becomes a third bogus platform that matches no alias and no brand
+  colour. No legitimate platform name contains a slash — verified against the
+  full `dim_vods` set.
+- **The same service appears under several names** (`HBO Max`/`Max`,
+  `Voyo`/`Oneplay`), which silently splits one platform into two filters.
+  Canonicalise in `_PLATFORM_ALIASES` (exporter). `check_data_quality.py` flags
+  new near-duplicate spellings; genuinely distinct look-alikes (`Apple TV` vs
+  `Apple TV+`, the YouTube tiers) are listed in its `CONFIRMED_DISTINCT`.
 
 ## 6. Loader must be idempotent
 
