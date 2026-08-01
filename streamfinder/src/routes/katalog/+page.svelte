@@ -8,7 +8,7 @@
 	import AutocompleteDropdown from '$lib/components/AutocompleteDropdown.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
 	import { base } from '$app/paths';
-	import { replaceState } from '$app/navigation';
+	import { goto, afterNavigate } from '$app/navigation';
 	import { fold } from '$lib/search';
 	import { untrack } from 'svelte';
 	import { loadCrewIndex, isCrewLoaded } from '$lib/data/crew';
@@ -170,6 +170,13 @@
 	let displayedTitles = $derived(filtered.slice(0, page * PAGE_SIZE));
 	let hasMore = $derived(filtered.length > page * PAGE_SIZE);
 
+	// goto() throws if the router has not initialised yet, and
+	// this effect runs during mount — the throw broke the effect outright, so the
+	// URL was never written and filters vanished on Back. afterNavigate fires once
+	// the initial navigation is done, which is exactly when the router is ready.
+	let routerReady = $state(false);
+	afterNavigate(() => (routerReady = true));
+
 	// ── URL sync ──────────────────────────────────────────────────────────────
 	$effect(() => {
 		const params = new URLSearchParams();
@@ -186,12 +193,23 @@
 		if (recencyDays > 0) params.set('added', String(recencyDays));
 		if (sortBy !== 'vod_date') params.set('sort', sortBy);
 		const str = params.toString();
-		// SvelteKit's replaceState, NOT the browser's: the native one takes a state
-		// object and would overwrite the router's own history state with null. Its
-		// popstate handler opens with `if (event.state?.[HISTORY_INDEX])`, so with
-		// that wiped it falls through to a branch that only updates the URL and
-		// never navigates — Back appeared dead, and a second Back skipped a page.
-		replaceState(str ? '?' + str : location.pathname, {});
+		// Three APIs look right here and two are not:
+		//   history.replaceState(null, ...) wipes the router's own history state, so
+		//     Back stopped navigating at all;
+		//   replaceState() from $app/navigation is for shallow routing — it stores
+		//     `page.url.href` as the entry's URL, NOT the one you hand it, so the
+		//     address bar showed the filters while the history entry did not, and
+		//     Back restored an unfiltered page;
+		//   goto() performs a real client-side navigation, which is what makes the
+		//     filtered URL the thing Back returns to.
+		// keepFocus keeps the search field from losing the caret mid-typing, noScroll
+		// keeps the grid still, and replaceState avoids one history entry per keystroke.
+		if (!routerReady) return; // deps are read above, so this still re-runs later
+		goto(str ? '?' + str : location.pathname, {
+			replaceState: true,
+			keepFocus: true,
+			noScroll: true
+		});
 	});
 
 	// ── Dimension pills available counts ─────────────────────────────────────
