@@ -24,9 +24,15 @@
 		title.is_toplevel === false && (title.season_no != null || title.episode_no != null)
 	);
 
-	// Episode titles carry a "(S02E05)" marker — strip it for display.
+	// Episode titles carry a "(S02E05)" marker — strip it for display. Some CSFD
+	// titles also carry stray bidi isolate marks (U+2066–2069, U+200E/200F); they
+	// are invisible but break trimming and comparison, so drop them too.
 	let cleanTitle = $derived(
-		title.title.replace(/\s*\((?:S\d+)?E\d+\)\s*$/i, '').replace(/\s+/g, ' ').trim()
+		title.title
+			.replace(/[⁦-⁩‎‏]/g, '')
+			.replace(/\s*\((?:S\d+)?E\d+\)\s*$/i, '')
+			.replace(/\s+/g, ' ')
+			.trim()
 	);
 
 	let seLabel = $derived(
@@ -39,23 +45,15 @@
 					: null
 	);
 
-	let genreLine = $derived(title.genres.slice(0, 2).join(' · '));
-
 	// Kalendár child cards lead with the serial name; catalog cards use their own title.
 	let headline = $derived(isChild && serialTitle ? serialTitle : cleanTitle);
 
-	// An episode name worth showing: not a bare "Epizoda 3" / "Episode 8" restating
-	// the number the S·E badge already carries, and not just the serial name with a
-	// season suffix ("Leanne- Season 2"). Otherwise the card keeps its genre line.
-	let episodeName = $derived.by(() => {
-		if (!isChild) return null;
-		if (/^(epizoda|episode|d[ií]l|s[eé]rie|season)\s*\d+$/i.test(cleanTitle)) return null;
-		const withoutSeason = cleanTitle.replace(/[-–—]\s*(s[eé]rie|season)\s*\d+$/i, '').trim();
-		if (serialTitle && withoutSeason === serialTitle) return null;
-		return cleanTitle;
-	});
-
-	let subLine = $derived(episodeName ?? (genreLine || null));
+	// One line, one meaning: every card describes its work by genre. Episode names
+	// were tried here and read as stray fragments — CSFD's are wildly uneven (bare
+	// clock times "21:00", roman numerals "VI", full sentences that truncate mid-word,
+	// and 1.4k season rows whose "name" is just "Serial- Season 2"). The S·E badge
+	// already places the release; the episode's own name belongs on the detail page.
+	let subLine = $derived(title.genres.slice(0, 2).join(' · ') || null);
 
 	function handleClick() {
 		if (onclick) onclick(title);
