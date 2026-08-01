@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import PosterCard from './PosterCard.svelte';
+// The card's box — .poster-card, .poster-media and its 2/3 ratio — is defined
+// globally, not in the component. Without this the geometry assertions below measure
+// a collapsed 19px box and mean nothing.
+import '../../app.css';
 import type { TitleIndex } from '$lib/types';
 
 /**
@@ -220,5 +224,39 @@ describe('a card is always a link to the title page', () => {
 			serialTitle: 'Serial'
 		});
 		expect(container.querySelector('a.poster-link')?.getAttribute('href')).toContain('/titul/900/');
+	});
+});
+
+describe('the favourite heart sits on the poster, not on the text', () => {
+	/**
+	 * It first landed over the rating. The heart cannot be a child of .poster-media —
+	 * that is inside the <a>, and a button inside an anchor is invalid — so its
+	 * absolute offsets resolved against the whole card, and "bottom" meant the bottom
+	 * of the info area. Geometry is the only way to catch that: the markup and the CSS
+	 * both looked right.
+	 */
+	async function boxes(over: Partial<TitleIndex> = {}) {
+		const { container } = await render(PosterCard, { title: makeTitle(over) });
+		document.body.appendChild(container);
+		await new Promise((r) => requestAnimationFrame(() => r(null)));
+		const q = (sel: string) => container.querySelector(sel)?.getBoundingClientRect();
+		return { heart: q('.fav-btn'), media: q('.poster-media'), info: q('.card-info') };
+	}
+
+	test('the heart is inside the poster area', async () => {
+		const { heart, media } = await boxes();
+		expect(heart && media).toBeTruthy();
+		expect(heart!.top).toBeGreaterThanOrEqual(media!.top - 1);
+		expect(heart!.bottom).toBeLessThanOrEqual(media!.bottom + 1);
+	});
+
+	test('the heart never overlaps the title and rating block', async () => {
+		const { heart, info } = await boxes();
+		expect(heart!.bottom).toBeLessThanOrEqual(info!.top + 1);
+	});
+
+	test('it holds for a card with no poster image, which has the same box', async () => {
+		const { heart, info } = await boxes({ poster: null });
+		expect(heart!.bottom).toBeLessThanOrEqual(info!.top + 1);
 	});
 });

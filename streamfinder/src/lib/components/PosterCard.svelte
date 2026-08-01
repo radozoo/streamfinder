@@ -115,10 +115,30 @@
 	<a href="{base}/titul/{title.id}/{title.slug}" class="poster-link">
 		{@render cardBody()}
 	</a>
-	<FavoriteButton csfdId={title.csfd_id} />
+	<!-- The heart belongs to the POSTER's bottom-left, but it cannot live inside the
+	     <a>, and absolute offsets here resolve against the whole card — "bottom" landed
+	     on the info area, over the rating. This slot mirrors the poster box exactly
+	     (same width and 2/3 ratio as .poster-media), so the heart sits where intended
+	     without magic numbers. It ignores pointer events so the poster stays a link. -->
+	<div class="fav-slot">
+		<FavoriteButton csfdId={title.csfd_id} />
+	</div>
 </div>
 
 <style>
+	.fav-slot {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		aspect-ratio: 2/3;
+		pointer-events: none;
+	}
+
+	.fav-slot :global(.fav-btn) {
+		pointer-events: auto;
+	}
+
 	/* The link fills the card so the whole surface stays clickable. */
 	.poster-link {
 		display: flex;
