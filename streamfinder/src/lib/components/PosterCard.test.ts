@@ -163,6 +163,12 @@ describe('missing data degrades quietly', () => {
 		expect(container.querySelector('.card-rating')).toBeNull();
 	});
 
+	/** 260 real titles carry an empty platforms array — the key is always present. */
+	test('no platforms renders no platform badge', async () => {
+		const { container } = await render(PosterCard, { title: makeTitle({ platforms: [] }) });
+		expect(container.querySelector('.platform-tag')).toBeNull();
+	});
+
 	test('a running serial is badged', async () => {
 		const { container } = await render(PosterCard, {
 			title: makeTitle({ title_type: 'seriál', is_running: true })
