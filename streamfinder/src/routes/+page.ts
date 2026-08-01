@@ -95,17 +95,59 @@ export const load: PageLoad = async ({ parent }) => {
 		.sort((a, b) => recencyDate(b).localeCompare(recencyDate(a)))
 		.slice(0, 18);
 
-	// Skryté klenoty — highly rated, but few people have seen them
-	const hiddenGems = titles
+	// Skryté klenoty — highly rated, but few people have seen them.
+	//
+	// "High rating + few votes" on its own hands the rail to fan content. A concert
+	// film is rated by the band's devotees, so it sits at 95–99% where no drama ever
+	// reaches: 12 of 18 slots were live recordings. Note the vote count is NOT the
+	// culprit — average rating is flat across the vote bands (86.0 / 86.0 / 85.4 /
+	// 85.7), so sorting by rating alone is what does it. Two corrections, both
+	// measured against the real catalog rather than guessed:
+	//
+	//   1. Drop formats whose rating measures devotion to the subject rather than the
+	//      work itself — the same reasoning the art-films rail below uses.
+	//   2. Cap how many slots one genre may take. Without it documentaries alone fill
+	//      14 of 18, because they draw the same self-selecting audience.
+	//
+	// The vote floor rises 30 → 80: under 80 votes a rating is barely evidence.
+	// Known limitation: ČSFD files some stand-up specials under "Komedie", so a few
+	// still slip through. Left alone rather than pattern-matched on titles.
+	const FAN_FORMAT_GENRES = new Set([
+		'Hudební',
+		'Sportovní',
+		'Reality-TV',
+		'Soutěžní',
+		'Stand-up',
+		'Talk-show',
+		'Telenovela',
+		'Erotický',
+		'Pornografický'
+	]);
+	const GEM_GENRE_CAP = 4;
+	const GEM_RAIL_SIZE = 18;
+
+	const gemPool = titles
 		.filter(
 			(t) =>
 				isWork(t) &&
 				(t.rating ?? 0) >= 82 &&
-				(t.votes_count ?? 0) >= 30 &&
-				(t.votes_count ?? 0) <= 800
+				(t.votes_count ?? 0) >= 80 &&
+				(t.votes_count ?? 0) <= 800 &&
+				t.title_type !== 'divadelní záznam' &&
+				!t.genres.some((g) => FAN_FORMAT_GENRES.has(g))
 		)
-		.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
-		.slice(0, 18);
+		.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+
+	const gemGenreUsed = new Map<string, number>();
+	const hiddenGems: typeof gemPool = [];
+	for (const t of gemPool) {
+		const lead = t.genres[0] ?? '—';
+		const used = gemGenreUsed.get(lead) ?? 0;
+		if (used >= GEM_GENRE_CAP) continue;
+		gemGenreUsed.set(lead, used + 1);
+		hiddenGems.push(t);
+		if (hiddenGems.length === GEM_RAIL_SIZE) break;
+	}
 
 	// Artové filmy — a composite score, not a single threshold. Neither "low votes"
 	// nor "Drama" alone is selective: votes_count is biased by era and platform reach
