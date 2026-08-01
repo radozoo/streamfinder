@@ -12,51 +12,112 @@ export const load: PageLoad = async ({ parent }) => {
 
 	const todayStr = today.toISOString().slice(0, 10);
 
-	// Featured carousel: the 4–5 most interesting recent works. A hero slide needs an
-	// image, so a poster is mandatory. "Interesting" = rating tempered by how many
-	// people voted (fresh releases have few votes, so don't let a 90% / 12-vote fluke
-	// outrank a well-established 82%). Widen the window progressively until we have
-	// enough slides — there is always a set.
+	// ── Featured carousel ─────────────────────────────────────────────────────
+	//
+	// The carousel must read as a cross-section of the catalog, not as one genre's
+	// greatest hits. Two mechanisms, doing two different jobs — a single score
+	// cannot do both.
+	//
+	// RANKING — confidence, not popularity. The old score multiplied the rating by
+	// min(1, votes/500), which rewards being famous. While votes_count was truncated
+	// at its first thousands group that stayed hidden; once the counts were correct,
+	// the carousel collapsed onto five Nolan films whose scores had jumped ~47%.
+	// A vote FLOOR is no better: votes accumulate with age, so in the 0–7 day slice
+	// the median is 0 votes and only 25% would clear a floor of 50, against 79% at
+	// 31–45 days. A floor filters age, not quality, and hits hardest exactly the
+	// releases a carousel exists to show.
+	// Measuring the pool says what the vote count actually carries: mean rating by
+	// vote band is 56.5 / 59.6 / 59.4 / 66.3 / 66.9 — low-vote titles are NOT
+	// systematically overrated (their mean is lower) — but their spread is nearly
+	// double (sd 19.9 vs 10.8) and 9% of them exceed 90% against ~1% at high votes.
+	// That is noise, not bias, so the fix is shrinkage toward the pool mean: extremes
+	// get pulled in, nobody gets excluded, and a new title competes from day one.
+	//
+	// DIVERSITY — quotas. Shrinkage alone will not do it: The Dark Knight still
+	// scores 91 and still wins. Slots are the only thing that guarantees a mix.
 	const FEATURED_COUNT = 5;
+	const SHRINK_K = 40; // ≈ the vote count at which the spread above settles down
+	const MIN_SERIALS = 2; // films outnumber serials 3:1 and rate higher — reserve seats
+	const MAX_LEGACY = 1; // a classic landing on VOD is news; five of them is not
+	const MAX_PER_GENRE = 2; // breaks up a single franchise (it was 4/5 "Akční")
+	const RECENT_FROM = today.getFullYear() - 2; // "the last ~2 years"
 
 	const isFeaturable = (t: (typeof titles)[number]) =>
 		Boolean(t.poster) &&
 		(t.title_type === 'film' ||
 			(t.is_toplevel && (t.title_type === 'seriál' || t.title_type === 'tv film')));
 
-	const featuredScore = (t: (typeof titles)[number]) => {
-		const rating = t.rating ?? 0;
-		const votes = t.votes_count ?? 0;
-		const voteWeight = Math.min(1, votes / 500); // full confidence at ~500 votes
-		return rating * (0.6 + 0.4 * voteWeight);
-	};
+	// Freshness only breaks ties between comparable titles — it never outranks quality.
+	const daysSince = (iso: string) =>
+		Math.max(0, Math.round((today.getTime() - new Date(iso).getTime()) / 86_400_000));
 
 	const pickFeatured = (count: number) => {
-		for (const [days, minRating] of [
-			[45, 65],
-			[75, 62],
-			[120, 60],
-		] as const) {
-			const cands = titles
-				.filter(
-					(t) =>
-						t.vod_date &&
-						t.vod_date >= daysAgo(days) &&
-						t.vod_date <= todayStr &&
-						isFeaturable(t) &&
-						(t.rating ?? 0) >= minRating
-				)
-				.sort((a, b) => featuredScore(b) - featuredScore(a));
-			if (cands.length >= count) return cands.slice(0, count);
+		for (const days of [45, 75, 120] as const) {
+			const cands = titles.filter(
+				(t) =>
+					t.vod_date && t.vod_date >= daysAgo(days) && t.vod_date <= todayStr && isFeaturable(t)
+			);
+			if (cands.length < count) continue;
+
+			// Prior = the mean rating of everything rated in this window, so the
+			// shrinkage target moves with the pool instead of being a magic number.
+			const rated = cands.filter((t) => t.rating !== null);
+			const prior = rated.length
+				? rated.reduce((s, t) => s + (t.rating ?? 0), 0) / rated.length
+				: 65;
+
+			// An unrated title shrinks to exactly the prior: mid-pack, so a brand-new
+			// release can still take a slot a quota needs, but never leads on nothing.
+			const score = (t: (typeof titles)[number]) => {
+				const votes = t.votes_count ?? 0;
+				const rating = t.rating ?? prior;
+				return (rating * votes + prior * SHRINK_K) / (votes + SHRINK_K);
+			};
+
+			const ranked = [...cands].sort((a, b) => {
+				const d = score(b) - score(a);
+				return d !== 0 ? d : daysSince(a.vod_date!) - daysSince(b.vod_date!);
+			});
+
+			// Greedy pick under the quotas, then a second pass that fills any slot the
+			// quotas could not — an under-full carousel is worse than a repeated genre.
+			const picked: typeof ranked = [];
+			const genreUsed = new Map<string, number>();
+			let serials = 0;
+			let legacy = 0;
+
+			const take = (t: (typeof ranked)[number]) => {
+				picked.push(t);
+				genreUsed.set(t.genres[0] ?? '—', (genreUsed.get(t.genres[0] ?? '—') ?? 0) + 1);
+				if (t.title_type === 'seriál') serials++;
+				if ((t.year ?? 0) < RECENT_FROM) legacy++;
+			};
+
+			for (const t of ranked) {
+				if (picked.length === count) break;
+				if ((t.year ?? 0) < RECENT_FROM && legacy >= MAX_LEGACY) continue;
+				if ((genreUsed.get(t.genres[0] ?? '—') ?? 0) >= MAX_PER_GENRE) continue;
+				// Keep seats free for serials while only films are left to fill them.
+				const seatsLeft = count - picked.length;
+				if (t.title_type !== 'seriál' && seatsLeft <= MIN_SERIALS - serials) continue;
+				take(t);
+			}
+			if (picked.length < count) {
+				for (const t of ranked) {
+					if (picked.length === count) break;
+					if (!picked.includes(t)) take(t);
+				}
+			}
+			if (picked.length === count) return picked;
 		}
-		// last resort: best-scored recent works with a poster, whatever the rating
 		return titles
 			.filter((t) => t.vod_date && t.vod_date <= todayStr && isFeaturable(t))
-			.sort((a, b) => featuredScore(b) - featuredScore(a))
+			.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
 			.slice(0, count);
 	};
 
 	const featuredList = pickFeatured(FEATURED_COUNT);
+	const featuredIds = new Set(featuredList.map((t) => t.id));
 
 	// ── Curated editorial rails ──────────────────────────────────────────────
 	const isWork = (t: (typeof titles)[number]) => t.is_toplevel !== false;
@@ -77,9 +138,16 @@ export const load: PageLoad = async ({ parent }) => {
 
 	// Nejlíp hodnocené tento měsíc — quality first, but needs a few votes to be
 	// real; relax the vote bar if too few titles clear it.
+	// Excludes whatever the carousel already shows — its top five WERE this rail's
+	// top five, so the page opened with the same titles twice in a row.
 	const monthCut = daysAgo(35);
 	const ratedRecent = titles.filter(
-		(t) => isWork(t) && t.vod_date && t.vod_date >= monthCut && (t.rating ?? 0) > 0
+		(t) =>
+			isWork(t) &&
+			!featuredIds.has(t.id) &&
+			t.vod_date &&
+			t.vod_date >= monthCut &&
+			(t.rating ?? 0) > 0
 	);
 	let bestThisMonth = ratedRecent
 		.filter((t) => (t.votes_count ?? 0) >= 50)
