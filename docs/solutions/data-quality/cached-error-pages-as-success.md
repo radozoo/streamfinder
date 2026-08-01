@@ -6,7 +6,7 @@ scope:
   - "src/csfd_vod/extraction/scraper.py"
   - "scripts/purge_failed_cache.py"
   - "cache/html/"
-guard: "scripts/purge_failed_cache.py (report mode) — run after any large scrape"
+guard: "scripts/purge_failed_cache.py (report mode) — a gate in scripts/check_all.py"
 tags:
   - data-quality
   - scraping
@@ -88,8 +88,22 @@ only when two individual orphans were opened by hand and turned out to be 4 KB.
 
 ## Prevention
 
-- [ ] A scrape that does not contain the element it was waiting for returns None
-- [ ] Never cache a response that has not been validated as the expected page shape
-- [ ] `has()`-style cache checks must not be the sole judge of "already done"
-- [ ] Run `purge_failed_cache.py` (report mode) after a large scrape — a nonzero
-      count means pages are failing silently again
+- [x] A scrape that does not contain the element it was waiting for returns None
+- [x] Never cache a response that has not been validated as the expected page shape
+- [x] `has()`-style cache checks must not be the sole judge of "already done"
+- [x] `purge_failed_cache.py` report mode is a gate in `check_all.py`. It fails on
+      **both** halves: pages cached that are not title pages, and indexed URLs whose
+      page is gone — the state `--apply` leaves behind until `--refetch` has run.
+      Without the second half, purging and forgetting to refetch shows up green.
+
+The gate reads only files ≤ 50 KB (`SUSPECT_MAX_BYTES`). The bimodal split makes that
+safe — real pages are 150 KB+ — and it keeps the run at ~0.5 s instead of reading
+~7 GB, which is the difference between a gate that runs every time and one that doesn't.
+
+## What the write-up alone would not have prevented
+
+This incident was documented before it was guarded, and the guard field said
+*"run after any large scrape"* — an instruction to a human, and one nobody would have
+run, because the whole point of the bug is that nothing looks wrong. A finding is only
+recorded once something executable enforces it; until then the document is a story
+about the past, not a check on the future.

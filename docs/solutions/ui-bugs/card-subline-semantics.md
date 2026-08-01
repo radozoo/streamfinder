@@ -4,7 +4,7 @@ date: "2026-08-01"
 project: "csfd/streamfinder"
 scope:
   - "streamfinder/src/lib/components/PosterCard.svelte"
-guard: "none — not assertable; caught by the shape sweep (see docs/testing-strategy.md)"
+guard: "streamfinder/src/lib/components/PosterCard.test.ts (sub-line group); discovery via scripts/shape_sweep.py"
 tags:
   - ui-bugs
   - information-design

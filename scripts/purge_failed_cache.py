@@ -19,7 +19,11 @@ Most of these URLs reach the cache through the backfill scripts rather than
 iterates the harvested URL list. Their URLs survive in `cache/urls.json`, which
 maps every URL to its hash, so --refetch re-downloads exactly what was purged.
 
-Usage:  python3 scripts/purge_failed_cache.py             # report only
+Report mode doubles as a pre-deploy gate (it runs from check_all.py) and fails on
+either half of the problem: pages cached that are not title pages, and indexed URLs
+whose page is gone — the state left behind by --apply until --refetch has run.
+
+Usage:  python3 scripts/purge_failed_cache.py             # report / gate
         python3 scripts/purge_failed_cache.py --apply     # delete them
         python3 scripts/purge_failed_cache.py --refetch   # re-download whatever is missing
 """
@@ -31,6 +35,25 @@ from pathlib import Path
 
 MARKER = b"film-header"
 
+# A real title page is 150 KB+; every silent failure measured was under 10 KB, with
+# nothing between. Reading only the small ones keeps the gate to a few hundred files
+# instead of ~7 GB, and the margin is wide enough that the shape would have to change
+# completely before a genuine page slipped through unread.
+SUSPECT_MAX_BYTES = 50_000
+
+
+def _cached_path(cache_root: Path, url: str) -> Path:
+    return cache_root / "html" / f"{hashlib.md5(url.encode()).hexdigest()[:8]}.html"
+
+
+def _missing_from_index(cache_root: Path) -> list[str]:
+    """URLs the cache index knows about whose html file is not on disk."""
+    index_path = cache_root / "urls.json"
+    if not index_path.exists():
+        return []
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    return [u for u in index if not _cached_path(cache_root, u).exists()]
+
 
 def _refetch(cache_root: Path) -> int:
     """Re-download every URL in the index whose html file is gone."""
@@ -39,24 +62,26 @@ def _refetch(cache_root: Path) -> int:
     from csfd_vod.extraction.rate_limiter import RateLimiter
     from csfd_vod.extraction.scraper import VODScraper
 
-    index_path = cache_root / "urls.json"
-    if not index_path.exists():
-        print(f"FAIL: no cache index at {index_path}", file=sys.stderr)
+    if not (cache_root / "urls.json").exists():
+        print(f"FAIL: no cache index at {cache_root / 'urls.json'}", file=sys.stderr)
         return 2
 
-    index = json.loads(index_path.read_text(encoding="utf-8"))
-    missing = [
-        u for u in index
-        if not (cache_root / "html" / f"{hashlib.md5(u.encode()).hexdigest()[:8]}.html").exists()
-    ]
-    print(f"URLs in index : {len(index):,}\nmissing html  : {len(missing):,}")
+    missing = _missing_from_index(cache_root)
+    print(f"missing html  : {len(missing):,}")
     if not missing:
         return 0
 
     config = load_config_from_env()
     selectors = load_selectors(config.selectors_path)
-    scraper = VODScraper(selectors=selectors, rate_limiter=RateLimiter(config.rate_limit_delay))
     cache = HTMLCache(config.cache_dir)
+    scraper = VODScraper(
+        selectors=selectors,
+        rate_limiter=RateLimiter(
+            delay_ms=config.scrape.rate_limit_delay_ms,
+            jitter_ms=config.scrape.rate_limit_jitter_ms,
+        ),
+        user_agents=config.scrape.user_agents,
+    )
 
     saved = failed = 0
     for i, url in enumerate(missing, 1):
@@ -89,22 +114,33 @@ def main() -> int:
         return 2
 
     files = sorted(args.cache_dir.glob("*.html"))
-    bad = [p for p in files if MARKER not in p.read_bytes()]
+    suspect = [p for p in files if p.stat().st_size <= SUSPECT_MAX_BYTES]
+    bad = [p for p in suspect if MARKER not in p.read_bytes()]
+    missing = _missing_from_index(args.cache_dir.parent)
 
-    print(f"cached pages : {len(files):,}")
+    print(f"cached pages    : {len(files):,}")
     print(f"not a title page: {len(bad):,}")
     if bad:
         sizes = sorted(p.stat().st_size for p in bad)
-        print(f"  size range   : {sizes[0]:,} B – {sizes[-1]:,} B")
+        print(f"  size range    : {sizes[0]:,} B – {sizes[-1]:,} B")
         print(f"  e.g. {', '.join(p.name for p in bad[:5])}")
+    print(f"indexed but gone: {len(missing):,}")
 
-    if not bad:
-        print("\nnothing to purge")
+    if not bad and not missing:
+        print("\nOK: every indexed URL has a page, and every page is a title page")
         return 0
 
     if not args.apply:
-        print("\nDRY RUN — pass --apply to delete, then re-run `csfd scrape`")
-        return 0
+        if bad:
+            print("\nFAIL: pages are being cached that are not title pages —"
+                  " scrapes are failing silently again."
+                  "\n      See docs/solutions/data-quality/cached-error-pages-as-success.md"
+                  "\n      Purge with --apply, then --refetch.")
+        if missing:
+            print(f"\nFAIL: {len(missing):,} indexed URLs have no cached page —"
+                  " they will never reach the catalog."
+                  "\n      Re-download with --refetch.")
+        return 1
 
     for p in bad:
         p.unlink()

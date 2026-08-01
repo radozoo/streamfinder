@@ -6,6 +6,11 @@ question about the exported catalog:
 
   check_completeness.py  — is everything THERE?     (known titles, no duplicates)
   check_data_quality.py  — are the VALUES sane?     (readable text, live references)
+  purge_failed_cache.py  — did the SOURCE arrive?   (no error pages cached as titles)
+
+The third one looks upstream of the other two on purpose: a page that never
+downloaded correctly produces no bad value and no missing canary, so both of the
+first two pass while titles quietly go missing (566 of them did).
 
 Every gate runs even if an earlier one fails: seeing all the problems at once
 beats fixing them one deploy at a time. Exits non-zero if any gate failed.
@@ -16,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-GATES = ["check_completeness.py", "check_data_quality.py"]
+GATES = ["check_completeness.py", "check_data_quality.py", "purge_failed_cache.py"]
 
 
 def main() -> int:
