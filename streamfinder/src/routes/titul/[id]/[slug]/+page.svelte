@@ -2,6 +2,7 @@
 	import type { PageData } from './$types';
 	import { base } from '$app/paths';
 	import { platformSearchUrl } from '$lib/platforms';
+	import FavoriteButton from '$lib/components/FavoriteButton.svelte';
 	import {
 		ratingColor,
 		shapeText as buildShapeText,
@@ -154,7 +155,11 @@
 				<p class="detail-plot">{t.plot}</p>
 			{/if}
 
-			<!-- VOD links -->
+			<!-- Favourite + VOD links. The heart leads: it is the one action that works
+			     even when the title has no service to link out to. -->
+			<div class="vod-actions">
+				<FavoriteButton csfdId={t.csfd_id} size="action" label="Do oblíbených" />
+			</div>
 			{#if t.vods.length}
 				<div class="vod-actions">
 					{#each t.vods as vod}

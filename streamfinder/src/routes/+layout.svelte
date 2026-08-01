@@ -2,6 +2,7 @@
 	import type { LayoutData } from './$types';
 	import { page } from '$app/state';
 	import { base } from '$app/paths';
+	import { favorites } from '$lib/favorites.svelte';
 	import '../app.css';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
 
@@ -23,6 +24,9 @@
 		<a href="{base}/katalog" class:active={page.url.pathname.startsWith(base + '/katalog')}>Katalog</a>
 		<a href="{base}/kalendar" class:active={page.url.pathname.startsWith(base + '/kalendar')}>Kalendář</a>
 		<a href="{base}/insights" class:active={page.url.pathname.startsWith(base + '/insights')}>Insights</a>
+		<a href="{base}/oblibene" class:active={page.url.pathname.startsWith(base + '/oblibene')}>
+			Oblíbené{#if favorites.count}<span class="nav-count">{favorites.count}</span>{/if}
+		</a>
 	</div>
 	<button class="nav-search" onclick={() => (searchOpen = true)} aria-label="Hledat">
 		<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -88,6 +92,17 @@
 	}
 
 	.nav-links a:hover,
+	.nav-count {
+		margin-left: 0.35rem;
+		padding: 1px 6px;
+		border-radius: 999px;
+		font-size: 0.68rem;
+		font-weight: 700;
+		background: rgba(244, 63, 94, 0.16);
+		color: #fb7185;
+		font-variant-numeric: tabular-nums;
+	}
+
 	.nav-links a.active {
 		color: var(--text-primary);
 	}

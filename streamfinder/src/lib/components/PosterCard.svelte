@@ -2,6 +2,7 @@
 	import type { TitleIndex } from '$lib/types';
 	import { base } from '$app/paths';
 	import { platformColor } from '$lib/platforms';
+	import FavoriteButton from './FavoriteButton.svelte';
 	import { ratingColor } from '$lib/format';
 
 	// A card is always a link to the title's own page. It used to switch to a
@@ -106,11 +107,27 @@
 	</div>
 {/snippet}
 
-<a href="{base}/titul/{title.id}/{title.slug}" class="poster-card">
-	{@render cardBody()}
-</a>
+<!-- The card is a wrapper, not the link itself: a <button> inside an <a> is invalid
+     HTML and its clicks are unreliable. The wrapper keeps the .poster-card class so
+     every existing layout rule (.scroll-row .poster-card sizing, hover, surface)
+     applies to the element that actually sits in the grid. -->
+<div class="poster-card">
+	<a href="{base}/titul/{title.id}/{title.slug}" class="poster-link">
+		{@render cardBody()}
+	</a>
+	<FavoriteButton csfdId={title.csfd_id} />
+</div>
 
 <style>
+	/* The link fills the card so the whole surface stays clickable. */
+	.poster-link {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		color: inherit;
+		text-decoration: none;
+	}
+
 	/* Categorical badges live on the poster; descriptive text lives below it
 	   (.poster-media box sizing is defined globally in app.css) */
 	.type-tag {

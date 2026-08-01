@@ -18,8 +18,8 @@
  *
  * Run:  npm run test:smoke
  */
-import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import { startDevServer } from './server.mjs';
 import { pickShapes } from './shapes.mjs';
 
 const PORT = 5178;
@@ -28,26 +28,13 @@ const ORIGIN = `http://localhost:${PORT}`;
 const failures = [];
 const warnings = [];
 
-const server = spawn('npx', ['vite', 'dev', '--port', String(PORT)], { stdio: 'ignore' });
-process.on('exit', () => server.kill());
+const { stop: stopServer } = await startDevServer(PORT);
 
-async function waitForServer() {
-	for (let i = 0; i < 60; i++) {
-		try {
-			if ((await fetch(ORIGIN)).ok) return;
-		} catch {
-			/* not up yet */
-		}
-		await new Promise((r) => setTimeout(r, 500));
-	}
-	throw new Error(`dev server did not start on ${PORT}`);
-}
 
 // Placeholders that mean a value was formatted without being checked. Matched with
 // word boundaries so a film legitimately titled "Null" is not a finding.
 const LEAKED = /\b(undefined|NaN|\[object Object\])\b/;
 
-await waitForServer();
 const shapes = pickShapes();
 console.log(`sweeping ${shapes.length} shapes\n`);
 
@@ -112,7 +99,7 @@ for (const t of shapes) {
 }
 
 await browser.close();
-server.kill();
+stopServer();
 
 if (warnings.length) console.log(`\nwarnings (not failures):\n  ${warnings.join('\n  ')}`);
 console.log(

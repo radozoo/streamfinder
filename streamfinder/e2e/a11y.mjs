@@ -13,8 +13,8 @@
  *
  * Run:  npm run test:a11y
  */
-import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import { startDevServer } from './server.mjs';
 import { AxeBuilder } from '@axe-core/playwright';
 import { pickShapes } from './shapes.mjs';
 
@@ -30,22 +30,7 @@ const BLOCKING = new Set(['serious', 'critical']);
 // and when the token is fixed this entry comes out and the rule starts blocking.
 const KNOWN = new Set(['color-contrast']);
 
-const server = spawn('npx', ['vite', 'dev', '--port', String(PORT)], { stdio: 'ignore' });
-process.on('exit', () => server.kill());
-
-async function waitForServer() {
-	for (let i = 0; i < 60; i++) {
-		try {
-			if ((await fetch(ORIGIN)).ok) return;
-		} catch {
-			/* not up yet */
-		}
-		await new Promise((r) => setTimeout(r, 500));
-	}
-	throw new Error(`dev server did not start on ${PORT}`);
-}
-
-await waitForServer();
+const { stop: stopServer } = await startDevServer(PORT);
 
 // The three list pages plus one detail page per interesting shape — a detail page's
 // markup varies with its data (no poster, no rating, an episode timeline), so one
@@ -90,7 +75,7 @@ for (const [label, path] of routes) {
 }
 
 await browser.close();
-server.kill();
+stopServer();
 
 console.log(blocking ? `\nFAILED — ${blocking} serious/critical violation(s)` : '\nNO SERIOUS A11Y VIOLATIONS');
 process.exit(blocking ? 1 : 0);

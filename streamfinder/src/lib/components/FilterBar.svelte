@@ -23,6 +23,8 @@
 		selectedCountries,
 		selectedTags,
 		selectedTypes,
+		favoritesOnly = false,
+		favoritesCount = 0,
 		selectedCrew,
 		yearFrom,
 		yearTo,
@@ -39,6 +41,7 @@
 		onToggleCountry,
 		onToggleTag,
 		onToggleType,
+		onToggleFavoritesOnly,
 		onSelectCrew,
 		onRemoveCrew,
 		onYearChange,
@@ -58,6 +61,8 @@
 		selectedCountries: string[];
 		selectedTags: string[];
 		selectedTypes: string[];
+		favoritesOnly?: boolean;
+		favoritesCount?: number;
 		selectedCrew: string[];
 		yearFrom: number;
 		yearTo: number;
@@ -72,6 +77,7 @@
 		onToggleCountry: (name: string) => void;
 		onToggleTag: (name: string) => void;
 		onToggleType: (name: string) => void;
+		onToggleFavoritesOnly?: () => void;
 		onSelectCrew: (name: string) => void;
 		onRemoveCrew: (name: string) => void;
 		onYearChange: (from: number, to: number) => void;
@@ -118,6 +124,26 @@
 				{/each}
 			</div>
 		</FilterDropdown>
+	{/if}
+
+	{#if onToggleFavoritesOnly}
+		<!-- A switch, not a dropdown: there is nothing to choose inside it. Hidden until
+		     something is actually favourited, so it never offers an empty result. -->
+		<button
+			class="fav-filter"
+			class:on={favoritesOnly}
+			type="button"
+			aria-pressed={favoritesOnly}
+			disabled={favoritesCount === 0}
+			title={favoritesCount === 0 ? 'Zatím nemáte žádné oblíbené' : 'Zobrazit jen oblíbené'}
+			onclick={onToggleFavoritesOnly}
+		>
+			<svg viewBox="0 0 24 24" aria-hidden="true" width="14" height="14">
+				<path d="M12 20s-7-4.4-9.5-9C.5 7.3 2.7 4 6 4c2 0 3.4 1 4 2.2C10.6 5 12 4 14 4c3.3 0 5.5 3.3 3.5 7-2.5 4.6-9.5 9-9.5 9z" />
+			</svg>
+			Oblíbené
+			{#if favoritesCount}<span class="fav-filter-count">{favoritesCount}</span>{/if}
+		</button>
 	{/if}
 
 	<FilterDropdown label="Žánr" activeCount={selectedGenres.length}>
@@ -189,6 +215,52 @@
 </div>
 
 <style>
+	.fav-filter {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		flex-shrink: 0;
+		font: inherit;
+		font-size: 0.82rem;
+		padding: 0.45rem 0.8rem;
+		border-radius: var(--radius-sm);
+		background: var(--navy-700);
+		border: 1px solid var(--border);
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+
+	.fav-filter svg {
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.8;
+		stroke-linejoin: round;
+	}
+
+	.fav-filter:hover:not(:disabled) {
+		color: var(--text-primary);
+	}
+
+	.fav-filter.on {
+		color: #fb7185;
+		border-color: rgba(244, 63, 94, 0.4);
+		background: rgba(244, 63, 94, 0.1);
+	}
+
+	.fav-filter.on svg {
+		fill: #f43f5e;
+	}
+
+	.fav-filter:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.fav-filter-count {
+		font-variant-numeric: tabular-nums;
+		font-weight: 700;
+	}
+
 	.filter-bar {
 		display: flex;
 		align-items: center;

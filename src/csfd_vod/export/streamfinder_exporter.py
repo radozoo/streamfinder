@@ -569,6 +569,10 @@ class StreamfinderExporter:
                 "platforms": platforms,
                 "crew_ids": title_crew_map.get(tid, []),
                 "link": t["link"],
+                # ČSFD's own id. `id` above is a local SERIAL — it is fine as a URL
+                # segment, but it shifts if the database is ever rebuilt from scratch,
+                # so anything a user keeps (favourites) must be keyed on this instead.
+                "csfd_id": t["csfd_id"],
                 # hierarchy — Work vs. Release
                 "root_id": rid,
                 "root_title_id": root_title_id.get(rid) if not is_toplevel else None,
@@ -697,6 +701,10 @@ class StreamfinderExporter:
                 "reviews": reviews_map.get(tid, []),
                 "vods": vods,
                 "link": t["link"],
+                # ČSFD's own id. `id` above is a local SERIAL — it is fine as a URL
+                # segment, but it shifts if the database is ever rebuilt from scratch,
+                # so anything a user keeps (favourites) must be keyed on this instead.
+                "csfd_id": t["csfd_id"],
                 # hierarchy — Work vs. Release
                 "root_id": rid,
                 "root_title_id": root_title_id.get(rid) if not is_toplevel else None,

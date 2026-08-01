@@ -8,6 +8,7 @@
 	import { base } from '$app/paths';
 	import { goto, afterNavigate } from '$app/navigation';
 	import { fold } from '$lib/search';
+	import { favorites } from '$lib/favorites.svelte';
 	import { loadCrewIndex, isCrewLoaded } from '$lib/data/crew';
 
 	let { data }: { data: PageData } = $props();
@@ -64,6 +65,7 @@
 	let selectedTags = $state<string[]>(untrack(() => data.initialTags ?? []));
 	let selectedTypes = $state<string[]>(untrack(() => data.initialTypes ?? []));
 	let selectedCrew = $state<string[]>(untrack(() => data.initialCrew ?? []));
+	let favoritesOnly = $state<boolean>(data.initialFavoritesOnly ?? false);
 	let yearFrom = $state<number>(untrack(() => data.initialYearFrom ?? YEAR_MIN));
 	let yearTo = $state<number>(untrack(() => data.initialYearTo ?? YEAR_MAX));
 	let ratingMin = $state<number>(untrack(() => data.initialRatingMin ?? 0));
@@ -113,6 +115,7 @@
 		if (selectedCountries.length) params.set('country', selectedCountries.join(','));
 		if (selectedTags.length) params.set('tag', selectedTags.join(','));
 		if (selectedTypes.length) params.set('type', selectedTypes.join(','));
+		if (favoritesOnly) params.set('fav', '1');
 		for (const name of selectedCrew) params.append('crew', name);
 		if (yearFrom > YEAR_MIN) params.set('yearFrom', String(yearFrom));
 		if (yearTo < YEAR_MAX) params.set('yearTo', String(yearTo));
@@ -181,10 +184,14 @@
 		yearTo,
 		ratingMin,
 		crew: selectedCrew,
+		favoritesOnly,
 		crewNames: crewIdToName
 	}));
 
 	function passes(t: TitleIndex, f: typeof filterConfig, skip: string): boolean {
+		// Favourites are not a facet — they never widen a result set, so they are not
+		// skippable and take no part in the availability counts.
+		if (f.favoritesOnly && !favorites.has(t.csfd_id)) return false;
 		if (skip !== 'q' && f.q && !fold(t.title).includes(f.q) && !fold(t.title_en ?? '').includes(f.q))
 			return false;
 		if (skip !== 'genre' && f.genres.length && !f.genres.some((g) => t.genres.includes(g)))
@@ -308,6 +315,7 @@
 		selectedCountries = [];
 		selectedTags = [];
 		selectedTypes = [];
+		favoritesOnly = false;
 		selectedCrew = [];
 		yearFrom = YEAR_MIN;
 		yearTo = YEAR_MAX;
@@ -322,6 +330,7 @@
 		for (const c of selectedCountries) chips.push({ category: 'Krajina', value: c });
 		for (const t of selectedTags) chips.push({ category: 'Tag', value: t });
 		for (const ty of selectedTypes) chips.push({ category: 'Typ', value: ty });
+		if (favoritesOnly) chips.push({ category: 'Oblíbené', value: 'jen oblíbené' });
 		for (const c of selectedCrew) chips.push({ category: 'Tvůrce', value: c });
 		if (yearFrom > YEAR_MIN || yearTo < YEAR_MAX) chips.push({ category: 'Rok', value: `${yearFrom}–${yearTo}` });
 		if (ratingMin > 0) chips.push({ category: 'Hodnocení', value: `${ratingMin}%+` });
@@ -334,6 +343,7 @@
 		else if (category === 'Krajina') selectedCountries = selectedCountries.filter((c) => c !== value);
 		else if (category === 'Tag') selectedTags = selectedTags.filter((t) => t !== value);
 		else if (category === 'Typ') selectedTypes = selectedTypes.filter((ty) => ty !== value);
+		else if (category === 'Oblíbené') favoritesOnly = false;
 		else if (category === 'Tvůrce') selectedCrew = selectedCrew.filter((c) => c !== value);
 		else if (category === 'Rok') { yearFrom = YEAR_MIN; yearTo = YEAR_MAX; }
 		else if (category === 'Hodnocení') ratingMin = 0;
@@ -409,6 +419,9 @@
 			{selectedCountries}
 			{selectedTags}
 			{selectedTypes}
+			{favoritesOnly}
+			favoritesCount={favorites.count}
+			onToggleFavoritesOnly={() => (favoritesOnly = !favoritesOnly)}
 			{selectedCrew}
 			{yearFrom}
 			{yearTo}

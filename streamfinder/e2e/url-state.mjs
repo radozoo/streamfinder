@@ -17,8 +17,8 @@
  *
  *   node e2e/url-state.mjs          (or: npm run test:e2e)
  */
-import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import { startDevServer } from './server.mjs';
 
 const PORT = 5177;
 const ORIGIN = `http://localhost:${PORT}`;
@@ -31,23 +31,7 @@ const check = (ok, what, detail) => {
 	if (!ok) failures.push(what);
 };
 
-const server = spawn('npx', ['vite', 'dev', '--port', String(PORT)], { stdio: 'ignore' });
-const stop = () => server.kill();
-process.on('exit', stop);
-
-async function waitForServer() {
-	for (let i = 0; i < 60; i++) {
-		try {
-			if ((await fetch(ORIGIN)).ok) return true;
-		} catch {
-			/* not up yet */
-		}
-		await new Promise((r) => setTimeout(r, 500));
-	}
-	throw new Error(`dev server did not start on ${PORT}`);
-}
-
-await waitForServer();
+const { stop: stopServer } = await startDevServer(PORT);
 const browser = await chromium.launch();
 const page = await browser.newPage();
 await page.setViewportSize({ width: 1440, height: 900 });
@@ -69,23 +53,23 @@ for (const route of PAGES) {
 
 async function runRoute(route) {
 	await page.goto(`${ORIGIN}/${route}`, { waitUntil: 'domcontentloaded' });
-	await page.waitForSelector('a.poster-card');
-	const unfiltered = await page.locator('a.poster-card').count();
+	await page.waitForSelector('a.poster-link');
+	const unfiltered = await page.locator('a.poster-link').count();
 
 	// Filtering must reach the URL — if it does not, there is nothing for Back to
 	// restore, and the failure is silent because the page itself looks right.
 	await page.locator('input').first().fill(QUERY);
 	await page.waitForTimeout(900);
-	const filtered = await page.locator('a.poster-card').count();
+	const filtered = await page.locator('a.poster-link').count();
 	check(page.url().includes(`q=${QUERY}`), `${route}: filter reaches the URL`, page.url());
 	check(filtered < unfiltered, `${route}: filter actually narrows the grid`, `${unfiltered} → ${filtered}`);
 
-	await page.locator('a.poster-card').first().click();
+	await page.locator('a.poster-link').first().click();
 	await page.waitForURL(/\/titul\//);
 	await page.waitForTimeout(400);
 
 	await page.goBack();
-	await page.waitForSelector('a.poster-card', { timeout: 15_000 });
+	await page.waitForSelector('a.poster-link', { timeout: 15_000 });
 	await page.waitForTimeout(800);
 
 	// The page must come back, not just the address bar: assert on rendered cards.
@@ -95,7 +79,7 @@ async function runRoute(route) {
 		`${route}: Back restores the filter input`
 	);
 	check(
-		(await page.locator('a.poster-card').count()) === filtered,
+		(await page.locator('a.poster-link').count()) === filtered,
 		`${route}: Back restores the filtered grid`
 	);
 	check((await page.locator('h1.detail-title').count()) === 0, `${route}: Back leaves the detail page`);
@@ -134,7 +118,7 @@ for (const [route, label, param] of [
 ]) {
 	try {
 		await page.goto(`${ORIGIN}/${route}`, { waitUntil: 'domcontentloaded' });
-		await page.waitForSelector('a.poster-card');
+		await page.waitForSelector('a.poster-link');
 		await page.waitForTimeout(600);
 		await openPanel(label);
 		await clickPill(0);
@@ -157,10 +141,63 @@ for (const [route, label, param] of [
 	}
 }
 
+
+// ── Favourites ────────────────────────────────────────────────────────────────
+// Stored in localStorage under a ČSFD id rather than the catalog's local SERIAL id,
+// so a database rebuild cannot repoint someone's list at different films. These
+// check the parts that would silently lose a list: persistence across a reload, and
+// that the heart on a card does not follow the card's link.
+console.log('\nfavourites');
+try {
+	await page.goto(`${ORIGIN}/katalog`, { waitUntil: 'domcontentloaded' });
+	await page.waitForSelector('.poster-card');
+	await page.waitForTimeout(600);
+
+	const urlBefore = page.url();
+	await page.locator('.fav-btn.card').nth(0).click();
+	await page.waitForTimeout(250);
+	await page.locator('.fav-btn.card').nth(1).click();
+	await page.waitForTimeout(400);
+
+	check(page.url() === urlBefore, 'hearting a card does not navigate', page.url().replace(ORIGIN, ''));
+	check((await page.locator('.fav-btn.on').count()) === 2, 'both hearts read as on');
+	check(
+		(await page.locator('.nav-count').innerText().catch(() => '')) === '2',
+		'the nav badge counts them'
+	);
+
+	const stored = await page.evaluate(() => localStorage.getItem('streamfinder:favorites:v1'));
+	check(JSON.parse(stored ?? '{}').ids?.length === 2, 'two ids are persisted', stored ?? 'nothing');
+
+	await page.goto(`${ORIGIN}/oblibene`, { waitUntil: 'domcontentloaded' });
+	await page.waitForTimeout(700);
+	check((await page.locator('.poster-card').count()) === 2, 'the Oblíbené page lists them');
+
+	await page.reload({ waitUntil: 'domcontentloaded' });
+	await page.waitForTimeout(700);
+	check((await page.locator('.poster-card').count()) === 2, 'they survive a reload');
+
+	await page.locator('.fav-btn.card').first().click();
+	await page.waitForTimeout(500);
+	check((await page.locator('.poster-card').count()) === 1, 'un-hearting removes it from the list');
+
+	await page.goto(`${ORIGIN}/katalog`, { waitUntil: 'domcontentloaded' });
+	await page.waitForSelector('.poster-card');
+	await page.waitForTimeout(600);
+	const all = await page.locator('.poster-card').count();
+	await page.locator('button.fav-filter').click();
+	await page.waitForTimeout(900);
+	const only = await page.locator('.poster-card').count();
+	check(only === 1 && only < all, 'the "Oblíbené" filter narrows to the saved ones', `${all} → ${only}`);
+	check(page.url().includes('fav=1'), 'the filter reaches the URL', page.url().replace(ORIGIN, ''));
+} catch (e) {
+	check(false, 'favourites flow completed', String(e).split('\n')[0]);
+}
+
 check(errors.length === 0, 'no uncaught errors', errors.join(' | ') || 'none');
 
 await browser.close();
-stop();
+stopServer();
 
 console.log(failures.length ? `\nFAILED (${failures.length})` : '\nALL URL-STATE CHECKS PASSED');
 process.exit(failures.length ? 1 : 0);

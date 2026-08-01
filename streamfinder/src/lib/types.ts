@@ -1,5 +1,8 @@
 export interface TitleIndex {
+	/** Local Postgres SERIAL — fine for URLs, but reassigned on a database rebuild. */
 	id: number;
+	/** ČSFD's own id. Stable forever, so it is what favourites are keyed on. */
+	csfd_id: number | null;
 	slug: string;
 	title: string;
 	title_en: string | null;

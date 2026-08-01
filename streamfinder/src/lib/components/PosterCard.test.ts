@@ -16,6 +16,7 @@ import type { TitleIndex } from '$lib/types';
 function makeTitle(over: Partial<TitleIndex> = {}): TitleIndex {
 	return {
 		id: 1,
+		csfd_id: 100_001,
 		slug: 'test-2024',
 		title: 'Test',
 		title_en: null,
@@ -186,17 +187,22 @@ describe('a card is always a link to the title page', () => {
 	 * the title's own page in every shape — including releases, which resolve to the
 	 * episode's page rather than the serial's.
 	 */
-	test('renders an anchor, never a button', async () => {
+	test('the card body is a link, and the only button is the favourite toggle', async () => {
 		const { container } = await render(PosterCard, { title: makeTitle() });
-		expect(container.querySelector('a.poster-card')).not.toBeNull();
-		expect(container.querySelector('button')).toBeNull();
+		expect(container.querySelector('a.poster-link')).not.toBeNull();
+		// The heart cannot live inside the <a> — a button nested in an anchor is invalid
+		// HTML — so it is a sibling. Nothing else on a card may be a button: that was
+		// the old modal-vs-page split this suite exists to prevent coming back.
+		const buttons = [...container.querySelectorAll('button')];
+		expect(buttons).toHaveLength(1);
+		expect(buttons[0].classList.contains('fav-btn')).toBe(true);
 	});
 
 	test('href points at the title id and slug', async () => {
 		const { container } = await render(PosterCard, {
 			title: makeTitle({ id: 42, slug: 'duna-2021' })
 		});
-		expect(container.querySelector('a.poster-card')?.getAttribute('href')).toContain(
+		expect(container.querySelector('a.poster-link')?.getAttribute('href')).toContain(
 			'/titul/42/duna-2021'
 		);
 	});
@@ -213,6 +219,6 @@ describe('a card is always a link to the title page', () => {
 			}),
 			serialTitle: 'Serial'
 		});
-		expect(container.querySelector('a.poster-card')?.getAttribute('href')).toContain('/titul/900/');
+		expect(container.querySelector('a.poster-link')?.getAttribute('href')).toContain('/titul/900/');
 	});
 });
