@@ -43,13 +43,19 @@
 
 	// Kalendár child cards lead with the serial name; catalog cards use their own title.
 	let headline = $derived(isChild && serialTitle ? serialTitle : cleanTitle);
-	let subLine = $derived.by(() => {
+
+	// An episode name worth showing: not a bare "Epizoda 3" / "Episode 8" restating
+	// the number the S·E badge already carries, and not just the serial name with a
+	// season suffix ("Leanne- Season 2"). Otherwise the card keeps its genre line.
+	let episodeName = $derived.by(() => {
 		if (!isChild) return null;
-		const bits: string[] = [];
-		if (seLabel) bits.push(seLabel);
-		if (serialTitle && cleanTitle && cleanTitle !== serialTitle) bits.push(cleanTitle);
-		return bits.join(' · ') || null;
+		if (/^(epizoda|episode|d[ií]l|s[eé]rie|season)\s*\d+$/i.test(cleanTitle)) return null;
+		const withoutSeason = cleanTitle.replace(/[-–—]\s*(s[eé]rie|season)\s*\d+$/i, '').trim();
+		if (serialTitle && withoutSeason === serialTitle) return null;
+		return cleanTitle;
 	});
+
+	let subLine = $derived(episodeName ?? (genreLine || null));
 
 	function handleClick() {
 		if (onclick) onclick(title);
@@ -84,8 +90,6 @@
 		<p class="card-title">{headline}</p>
 		{#if subLine}
 			<p class="card-sub">{subLine}</p>
-		{:else if genreLine}
-			<p class="card-genres">{genreLine}</p>
 		{/if}
 		<div class="card-meta">
 			{#if title.rating !== null}
@@ -202,20 +206,12 @@
 		backdrop-filter: blur(4px);
 	}
 
-	.card-genres,
 	.card-sub {
 		font-size: 0.72rem;
 		margin-top: 0.2rem;
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
-	}
-
-	.card-genres {
-		color: var(--text-secondary);
-	}
-
-	.card-sub {
 		color: var(--text-secondary);
 	}
 </style>
