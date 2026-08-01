@@ -173,6 +173,17 @@ CREATE TABLE IF NOT EXISTS csfd_vod.dim_tmdb (
 
 CREATE INDEX IF NOT EXISTS idx_tmdb_tmdb_id ON csfd_vod.dim_tmdb(tmdb_id);
 
+-- Titles TMDB was asked about and did not have. Without this a fruitless search
+-- leaves no trace, so the same questions are re-asked on every run — the last
+-- film-only enrich spent 1 285 of its 1 295 lookups that way.
+CREATE TABLE IF NOT EXISTS csfd_vod.tmdb_misses (
+    title_id INTEGER PRIMARY KEY REFERENCES csfd_vod.fact_titles(title_id) ON DELETE CASCADE,
+    attempts INTEGER NOT NULL DEFAULT 1,
+    last_tried_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tmdb_misses_last_tried ON csfd_vod.tmdb_misses(last_tried_at);
+
 -- Failed records (dead letter queue)
 CREATE TABLE IF NOT EXISTS csfd_vod.failed_records (
     failed_record_id SERIAL PRIMARY KEY,
