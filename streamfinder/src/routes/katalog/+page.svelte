@@ -8,6 +8,7 @@
 	import AutocompleteDropdown from '$lib/components/AutocompleteDropdown.svelte';
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
 	import { base } from '$app/paths';
+	import { replaceState } from '$app/navigation';
 	import { fold } from '$lib/search';
 	import { untrack } from 'svelte';
 	import { loadCrewIndex, isCrewLoaded } from '$lib/data/crew';
@@ -185,7 +186,12 @@
 		if (recencyDays > 0) params.set('added', String(recencyDays));
 		if (sortBy !== 'vod_date') params.set('sort', sortBy);
 		const str = params.toString();
-		history.replaceState(null, '', str ? '?' + str : location.pathname);
+		// SvelteKit's replaceState, NOT the browser's: the native one takes a state
+		// object and would overwrite the router's own history state with null. Its
+		// popstate handler opens with `if (event.state?.[HISTORY_INDEX])`, so with
+		// that wiped it falls through to a branch that only updates the URL and
+		// never navigates — Back appeared dead, and a second Back skipped a page.
+		replaceState(str ? '?' + str : location.pathname, {});
 	});
 
 	// ── Dimension pills available counts ─────────────────────────────────────

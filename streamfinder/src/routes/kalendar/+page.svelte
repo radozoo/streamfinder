@@ -6,6 +6,7 @@
 	import FilterBar from '$lib/components/FilterBar.svelte';
 	import ActiveFilters from '$lib/components/ActiveFilters.svelte';
 	import { base } from '$app/paths';
+	import { replaceState } from '$app/navigation';
 	import { fold } from '$lib/search';
 	import { loadCrewIndex, isCrewLoaded } from '$lib/data/crew';
 
@@ -110,7 +111,12 @@
 		if (yearTo < YEAR_MAX) params.set('yearTo', String(yearTo));
 		if (ratingMin > 0) params.set('ratingMin', String(ratingMin));
 		const qs = params.toString();
-		history.replaceState(null, '', qs ? '?' + qs : location.pathname);
+		// SvelteKit's replaceState, NOT the browser's: the native one takes a state
+		// object and would overwrite the router's own history state with null. Its
+		// popstate handler opens with `if (event.state?.[HISTORY_INDEX])`, so with
+		// that wiped it falls through to a branch that only updates the URL and
+		// never navigates — Back appeared dead, and a second Back skipped a page.
+		replaceState(qs ? '?' + qs : location.pathname, {});
 	});
 
 	function loadMoreDays() {
