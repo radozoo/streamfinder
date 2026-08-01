@@ -188,6 +188,31 @@ def check_value_ranges(titles: list) -> list[str]:
     return problems
 
 
+def check_no_truncation_ceiling(titles: list) -> list[str]:
+    """Popular titles must not pile up against a suspiciously round ceiling.
+
+    ČSFD groups thousands with a non-breaking space, so a naive `(\\d+)` captured
+    only the leading group: Forrest Gump's 131654 ratings were stored as 131 and
+    the whole catalog's maximum sat at exactly 999. Nothing errored, and every
+    feature ranking by popularity or obscurity was quietly wrong.
+
+    In a catalog this size at least one title must exceed a few thousand votes.
+    A maximum stuck just below a power of ten means digits are being dropped.
+    See: 2026-08-01-votes-count-thousands-separator
+    """
+    votes = [t["votes_count"] for t in titles if isinstance(t.get("votes_count"), int)]
+    if not votes:
+        return []
+    top = max(votes)
+    for ceiling in (1_000, 10_000, 100_000):
+        if 0.95 * ceiling <= top < ceiling:
+            return [
+                f"max votes_count is {top}, just under {ceiling:,} — digits are "
+                f"probably being truncated at a thousands separator"
+            ]
+    return []
+
+
 def check_detail_shards(titles: list, data_dir: Path) -> list[str]:
     """Every index entry has its detail file, and no detail file is orphaned.
 
@@ -256,6 +281,7 @@ def main() -> int:
         ("no duplicate platform spellings", check_platform_aliases(titles, dimensions)),
         ("genres match dimensions", check_vocabularies(titles, dimensions)),
         ("values within range", check_value_ranges(titles)),
+        ("no truncation ceiling", check_no_truncation_ceiling(titles)),
         ("detail shards match index", check_detail_shards(titles, args.data_dir)),
         ("catalog did not shrink", shrink_fail),
     ]

@@ -197,13 +197,18 @@ class VODTitleParser:
             if match:
                 data["rating"] = int(match.group(1))
 
-        # --- Votes count — .more-modal-ratings-fanclub text "Hodnocení467" ---
+        # --- Votes count — .more-modal-ratings-fanclub text "Hodnocení (131 654)" ---
+        # ČSFD groups thousands with a NON-BREAKING SPACE, so a plain (\d+) stopped
+        # at the first group and silently stored Forrest Gump's 131654 votes as 131.
+        # Every title above 999 votes was truncated to its leading group — which
+        # quietly wrecked anything ranking by popularity or obscurity. Match the
+        # separators too, then keep only the digits.
         votes_elem = soup.select_one(".more-modal-ratings-fanclub")
         if votes_elem:
             votes_text = votes_elem.get_text(strip=True)
-            votes_match = re.search(r"Hodnocen[íi]\D*(\d+)", votes_text)
+            votes_match = re.search(r"Hodnocen[íi]\D*([\d \s.,]*\d)", votes_text)
             if votes_match:
-                data["votes_count"] = int(votes_match.group(1))
+                data["votes_count"] = int(re.sub(r"\D", "", votes_match.group(1)))
 
         # --- Tags — .box-tags a ---
         # Skip the "více" (show-more) toggle link that lives inside .box-tags — it

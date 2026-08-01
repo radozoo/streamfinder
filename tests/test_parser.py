@@ -56,6 +56,8 @@ SAMPLE_HTML = """
     </div>
     <div class="plot-full">Hacker Neo discovers the truth about the Matrix.</div>
     <div class="film-rating-average">87%</div>
+    <!-- CSFD groups thousands with a NON-BREAKING SPACE (U+00A0). -->
+    <div class="more-modal-ratings-fanclub">Hodnocení (131 654) golfista POMO</div>
     <div class="box-tags">
         <a href="/stitky/1/">sci-fi</a>
         <a href="/stitky/2/">akce</a>
@@ -193,6 +195,17 @@ def test_parser_child_url_sets_hierarchy_and_type(parser):
     assert result.root_id == 99999
     assert result.csfd_id == 11111
     assert result.title_type == "epizoda"
+
+
+def test_parser_votes_count_keeps_thousands_groups(parser):
+    """Votes above 999 must survive the non-breaking-space thousands separator.
+
+    A plain (\\d+) stopped at the first group, storing 131654 as 131 — silently
+    truncating every popular title and skewing anything ranked by popularity.
+    """
+    url = "https://www.csfd.cz/film/1-the-matrix/prehled/"
+    result = parser.parse(SAMPLE_HTML, url)
+    assert result.votes_count == 131654
 
 
 def test_parser_slugless_url_still_gets_hierarchy(parser):
