@@ -12,9 +12,13 @@
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "node e2e/url-state.mjs"
+    "test:e2e": "node e2e/url-state.mjs",
+    "test:smoke": "node e2e/smoke.mjs",
+    "test:a11y": "node e2e/a11y.mjs",
+    "test:ux": "npm run test:e2e && npm run test:smoke && npm run test:a11y"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@sveltejs/adapter-auto": "^7.0.1",
     "@sveltejs/kit": "^2.57.0",
     "@sveltejs/vite-plugin-svelte": "^7.0.0",

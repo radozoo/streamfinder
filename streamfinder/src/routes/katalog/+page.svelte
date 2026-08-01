@@ -205,7 +205,12 @@
 		// keepFocus keeps the search field from losing the caret mid-typing, noScroll
 		// keeps the grid still, and replaceState avoids one history entry per keystroke.
 		if (!routerReady) return; // deps are read above, so this still re-runs later
-		goto(str ? '?' + str : location.pathname, {
+		const target = str ? '?' + str : location.pathname;
+		// goto() is a real navigation, so firing it when nothing changed re-runs load
+		// for no reason — and on mount, with no filters set, that is every page view.
+		if (location.pathname + location.search === new URL(target, location.href).pathname
+			+ new URL(target, location.href).search) return;
+		goto(target, {
 			replaceState: true,
 			keepFocus: true,
 			noScroll: true
@@ -351,7 +356,7 @@
 			placeholder="Hledat film, seriál…"
 			bind:value={searchQuery}
 		/>
-		<select class="sort-select" bind:value={sortBy}>
+		<select class="sort-select" aria-label="Řadit podle" bind:value={sortBy}>
 			<option value="vod_date">Nejnovější na VOD</option>
 			<option value="rating">Hodnocení</option>
 			<option value="votes">Počet hodnocení</option>
