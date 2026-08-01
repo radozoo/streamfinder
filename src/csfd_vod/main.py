@@ -68,9 +68,15 @@ def cmd_harvest(args) -> dict:
     list_html_dir = Path(config.cache_dir) / "vod_lists"
     urls = scraper.scrape_vod_all_urls(from_year=args.from_year, list_html_dir=list_html_dir)
 
+    # Union into the master vod_urls.json (never overwrite) — a partial or
+    # recent-years-only harvest (--from-year) must not drop URLs discovered by
+    # earlier, wider harvests. Mirrors cmd_harvest_platforms' merge behavior.
     vod_urls_path = Path(config.cache_dir) / "vod_urls.json"
     vod_urls_path.parent.mkdir(parents=True, exist_ok=True)
-    vod_urls_path.write_text(json.dumps(urls, indent=2, ensure_ascii=False), encoding="utf-8")
+    existing = json.loads(vod_urls_path.read_text(encoding="utf-8")) if vod_urls_path.exists() else []
+    merged = sorted(set(existing) | set(urls))
+    vod_urls_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+    urls = merged
 
     # Completeness guard: every month must have been harvested to CSFD's own last
     # page. Any shortfall means a month was silently truncated (the class of bug
