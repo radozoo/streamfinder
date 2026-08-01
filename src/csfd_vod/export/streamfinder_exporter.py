@@ -68,6 +68,7 @@ _PLATFORM_ALIASES = {
     "ITV Hub": "ITVX",
     "All 4": "Channel 4",
     "Voyo": "Oneplay",
+    "iTunes": "Apple TV",  # Apple's former store brand for the same catalog
 }
 
 
