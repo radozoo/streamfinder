@@ -196,9 +196,11 @@ export const load: PageLoad = async ({ parent }) => {
 		.slice(0, ART_RAIL_SIZE)
 		.map(({ t }) => t);
 
-	// Stats
+	// Stats. `total` counts WORKS, not rows: a third of the index is episodes and
+	// seasons, which the Katalóg never lists. Counting them made the headline
+	// promise 49883 titles and then show 33929.
 	const stats = {
-		total: titles.length,
+		total: titles.filter(isWork).length,
 		films: titles.filter((t) => t.title_type === 'film').length,
 		platforms: dimensions.platforms.length,
 		genres: dimensions.genres.length,

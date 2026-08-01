@@ -3,12 +3,11 @@
 	import type { TitleIndex } from '$lib/types';
 	import { base } from '$app/paths';
 	import PosterCard from '$lib/components/PosterCard.svelte';
-	import { platformColor } from '$lib/platforms';
+	import { platformColor, HOME_PLATFORMS } from '$lib/platforms';
 
 	let { data }: { data: PageData } = $props();
 
-	// Platforms surfaced in the "Podle platformy" section (in priority order).
-	const PLATFORMS = ['Netflix', 'Disney+', 'HBO Max', 'Max', 'Prime Video', 'Apple TV+'];
+	// Platforms surfaced in the "Podle platformy" section (see $lib/platforms).
 
 	function formatDate(iso: string) {
 		const d = new Date(iso);
@@ -176,10 +175,10 @@
 	{/if}
 {/snippet}
 
-{@render rail('Posledních 7 dní', 'Právě přibylo', data.justAdded, `${base}/kalendar`, 'Celý kalendář →')}
+{@render rail('Posledních 10 dní', 'Právě přibylo', data.justAdded, `${base}/kalendar`, 'Celý kalendář →')}
 {@render rail('Výběr redakce', 'Nejlíp hodnocené tento měsíc', data.bestThisMonth, `${base}/katalog?sort=rating`, 'Zobrazit vše →')}
 {@render rail('Nové epizody každý týden', 'Seriály, co právě běží', data.runningSerials, `${base}/katalog?type=${encodeURIComponent('seriál')}`, 'Zobrazit vše →')}
-{@render rail('80 %+ a málo vidění', 'Skryté klenoty', data.hiddenGems, `${base}/katalog?sort=rating`, 'Zobrazit vše →')}
+{@render rail('82 %+ a málo vidění', 'Skryté klenoty', data.hiddenGems, `${base}/katalog?sort=rating`, 'Zobrazit vše →')}
 {@render rail('Nízká sledovanost, výrazný styl', 'Artové filmy', data.artFilms, `${base}/katalog?type=${encodeURIComponent('film')}&sort=rating`, 'Prozkoumat →')}
 
 <!-- Podle platformy -->
@@ -191,7 +190,7 @@
 		</div>
 	</div>
 	<div class="plat-grid">
-		{#each PLATFORMS as p}
+		{#each HOME_PLATFORMS as p}
 			{@const dim = data.dimensions.platforms.find((x) => x.name === p)}
 			{#if dim}
 				<a

@@ -33,6 +33,25 @@ const BRAND: Record<string, string> = {
 	Oneplay: '#00b3a4'
 };
 
+// Subscription services surfaced as tiles in the landing page's "Podle platformy"
+// section, in priority order. Deliberately NOT the six largest by title count:
+// Apple TV is the biggest (16.5k) but it is a rent/buy store, and a tile promising
+// titles to browse should lead somewhere you can watch on a subscription you
+// already hold. Oneplay is the largest Czech service — leaving it off a Czech VOD
+// site was the real gap.
+//
+// Every name here must exist in dimensions.platforms, or the tile silently
+// disappears: that is how "Max" vanished after it was merged into "HBO Max".
+// Asserted by home-platforms.test.ts.
+export const HOME_PLATFORMS = [
+	'Netflix',
+	'Disney+',
+	'HBO Max',
+	'Prime Video',
+	'Oneplay',
+	'Apple TV+'
+];
+
 const NEUTRAL = '#334155'; // slate for services without a defined brand colour
 
 export function platformColor(name: string | undefined | null): string {
