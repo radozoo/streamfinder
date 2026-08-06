@@ -54,24 +54,53 @@ jobs:
         with:
           path: streamfinder/build
 
+  # Publishing this site is flaky on GitHub's side, so the deploy is retried.
+  #
+  # actions/deploy-pages waits for Pages to finish and gives up after 10 minutes,
+  # and on timeout it *cancels* the deployment — the run goes red while the site
+  # quietly keeps serving the previous build, which is the worst of both.
+  #
+  # The wait cannot be extended: 600000 ms is MAX_TIMEOUT inside the action (v4 and
+  # v5 alike), and a larger `timeout:` input is clamped with "timeout value is
+  # greater than the allowed maximum". Verified on run 31111688437, which still
+  # aborted at 10:12 with the input set to 30 minutes. Do not try that again.
+  #
+  # Nor is the slowness ours to fix: the same ~110 MB artifact published in 21
+  # seconds on 1 Aug and took 8m35s on 6 Aug, with 38 files' difference between
+  # them. On 6 Aug three consecutive attempts hit the 10-minute wall and the fourth
+  # succeeded, so retrying is what actually gets a deploy out.
+  #
+  # Each attempt is a fresh 10-minute window. Later attempts cost CI minutes only
+  # on the bad days; on a good day the first one succeeds and the rest are skipped.
   deploy:
     needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.d1.outputs.page_url || steps.d2.outputs.page_url || steps.d3.outputs.page_url }}
 
     steps:
       - name: Deploy to GitHub Pages
-        id: deployment
-        # Do NOT add `with: timeout:` here hoping for a longer wait. 600000 ms is a
-        # hard maximum inside the action, not a default: a larger value is clamped
-        # with "timeout value is greater than the allowed maximum" and changes
-        # nothing. Verified on run 31111688437, which still aborted at 10:12.
-        #
-        # When Pages takes longer than that, the action *cancels* the deployment, so
-        # the site keeps serving the previous build while main looks published. If
-        # that starts happening regularly, the fix is fewer files in the artifact (we
-        # publish one JSON per title) or creating the deployment through the Pages
-        # API and polling it ourselves — not this input.
+        id: d1
         uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Retry deploy (2/3)
+        id: d2
+        if: steps.d1.outcome == 'failure'
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      # The last attempt does not swallow its failure, so a genuinely broken deploy
+      # still turns the run red instead of passing silently.
+      - name: Retry deploy (3/3)
+        id: d3
+        if: steps.d1.outcome == 'failure' && steps.d2.outcome == 'failure'
+        uses: actions/deploy-pages@v4
+
+      - name: Report which attempt landed
+        if: always()
+        run: |
+          echo "attempt 1: ${{ steps.d1.outcome }}"
+          echo "attempt 2: ${{ steps.d2.outcome || 'skipped' }}"
+          echo "attempt 3: ${{ steps.d3.outcome || 'skipped' }}"
