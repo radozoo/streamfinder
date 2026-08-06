@@ -64,18 +64,14 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
+        # Do NOT add `with: timeout:` here hoping for a longer wait. 600000 ms is a
+        # hard maximum inside the action, not a default: a larger value is clamped
+        # with "timeout value is greater than the allowed maximum" and changes
+        # nothing. Verified on run 31111688437, which still aborted at 10:12.
+        #
+        # When Pages takes longer than that, the action *cancels* the deployment, so
+        # the site keeps serving the previous build while main looks published. If
+        # that starts happening regularly, the fix is fewer files in the artifact (we
+        # publish one JSON per title) or creating the deployment through the Pages
+        # API and polling it ourselves — not this input.
         uses: actions/deploy-pages@v4
-        with:
-          # The action waits for Pages to finish publishing and gives up after 10
-          # minutes by default — then *cancels* the deployment, so the site silently
-          # keeps serving the previous build while the run shows a red X.
-          #
-          # We publish one JSON file per title (51k of them, ~110 MB), and Pages
-          # publishes per file, so the wait scales with the file count, not the bytes.
-          # The 1 Aug deploy of a 110.7 MB artifact finished in under a minute; two
-          # runs of a 110.8 MB one both hit the wall at exactly 10:00, which is what
-          # sitting just past the edge looks like.
-          #
-          # 30 minutes buys headroom without hiding a real hang: a genuinely stuck
-          # deployment still fails, just later.
-          timeout: 1800000
