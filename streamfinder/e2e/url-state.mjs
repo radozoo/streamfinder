@@ -20,8 +20,6 @@
 import { chromium } from 'playwright';
 import { startDevServer } from './server.mjs';
 
-const PORT = 5177;
-const ORIGIN = `http://localhost:${PORT}`;
 const PAGES = ['katalog', 'kalendar'];
 const QUERY = 'batman';
 
@@ -31,7 +29,9 @@ const check = (ok, what, detail) => {
 	if (!ok) failures.push(what);
 };
 
-const { stop: stopServer } = await startDevServer(PORT);
+// The server picks its own free port; using its origin keeps this run off
+// whatever else happens to be listening on this machine.
+const { origin: ORIGIN, stop: stopServer } = await startDevServer();
 const browser = await chromium.launch();
 const page = await browser.newPage();
 await page.setViewportSize({ width: 1440, height: 900 });

@@ -22,13 +22,13 @@ import { chromium } from 'playwright';
 import { startDevServer } from './server.mjs';
 import { pickShapes } from './shapes.mjs';
 
-const PORT = 5178;
-const ORIGIN = `http://localhost:${PORT}`;
 
 const failures = [];
 const warnings = [];
 
-const { stop: stopServer } = await startDevServer(PORT);
+// The server picks its own free port; using its origin keeps this run off
+// whatever else happens to be listening on this machine.
+const { origin: ORIGIN, stop: stopServer } = await startDevServer();
 
 
 // Placeholders that mean a value was formatted without being checked. Matched with

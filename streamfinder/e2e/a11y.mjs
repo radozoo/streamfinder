@@ -18,8 +18,6 @@ import { startDevServer } from './server.mjs';
 import { AxeBuilder } from '@axe-core/playwright';
 import { pickShapes } from './shapes.mjs';
 
-const PORT = 5180;
-const ORIGIN = `http://localhost:${PORT}`;
 const BLOCKING = new Set(['serious', 'critical']);
 
 // Known, accepted, and to be ratcheted down — the same shape as the budgets in the
@@ -30,7 +28,9 @@ const BLOCKING = new Set(['serious', 'critical']);
 // and when the token is fixed this entry comes out and the rule starts blocking.
 const KNOWN = new Set(['color-contrast']);
 
-const { stop: stopServer } = await startDevServer(PORT);
+// The server picks its own free port; using its origin keeps this run off
+// whatever else happens to be listening on this machine.
+const { origin: ORIGIN, stop: stopServer } = await startDevServer();
 
 // The three list pages plus one detail page per interesting shape — a detail page's
 // markup varies with its data (no poster, no rating, an episode timeline), so one
@@ -63,6 +63,12 @@ for (const [label, path] of routes) {
 
 	const { violations } = await new AxeBuilder({ page })
 		.withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+		// axe walks into iframes, so a page with a trailer was graded on YouTube's
+		// player: an unnamed channel-avatar button, aria-level on an <a>, a prohibited
+		// aria attribute on #movie_player. Three of them, all critical or serious, none
+		// ours to fix and none reachable from our source — exactly the kind of finding
+		// that teaches people to ignore the gate. We audit our own markup.
+		.exclude('iframe')
 		.analyze();
 
 	const bad = violations.filter((v) => BLOCKING.has(v.impact) && !KNOWN.has(v.id));
@@ -70,7 +76,15 @@ for (const [label, path] of routes) {
 	blocking += bad.length;
 
 	console.log(`\n${label}  ${bad.length ? `${bad.length} serious+` : 'ok'}`);
-	for (const v of bad) console.log(`  FAIL [${v.impact}] ${v.id}: ${v.help} (${v.nodes.length}×)`);
+	for (const v of bad) {
+		console.log(`  FAIL [${v.impact}] ${v.id}: ${v.help} (${v.nodes.length}×)`);
+		// The rule name alone does not say which element to fix. Print the offending
+		// markup and its selector, so a failure is actionable without a second run.
+		for (const n of v.nodes.slice(0, 3)) {
+			console.log(`        at ${n.target.join(' ')}`);
+			console.log(`        ${n.html.replace(/\s+/g, ' ').slice(0, 160)}`);
+		}
+	}
 	for (const v of minor) console.log(`  note [${v.impact}] ${v.id}: ${v.help} (${v.nodes.length}×)`);
 }
 
