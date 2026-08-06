@@ -310,8 +310,26 @@ class StreamfinderExporter:
         return list(best.values()) + passthrough
 
     def _load_dim(self, session: Session, table: str, col: str) -> dict[int, list[str]]:
+        """Dimension values per title, in the order ČSFD listed them.
+
+        The ORDER BY is not cosmetic. Without it Postgres returns rows in physical
+        order, which matches insertion order only until something rewrites the table
+        — and the loader rewrites a title's dimensions on every re-parse (delete +
+        re-insert). So the same pages parsed twice produced different orderings, and
+        for `actors` that is visible: the detail page shows the first 20 and hides the
+        rest behind "více", so which cast members appear depended on where Postgres
+        happened to put the new tuples.
+
+        The SERIAL primary key is assigned in insert order, and the loader inserts in
+        parsed order, so ordering by it restores ČSFD's billing order and makes the
+        export reproducible.
+        """
+        pk = f"{col}_id"
+        rows = session.execute(
+            text(f"SELECT title_id, {col} FROM csfd_vod.{table} ORDER BY title_id, {pk}")
+        )
         result: dict[int, list[str]] = {}
-        for row in session.execute(text(f"SELECT title_id, {col} FROM csfd_vod.{table}")):
+        for row in rows:
             result.setdefault(row[0], []).append(row[1])
         return result
 
@@ -324,7 +342,10 @@ class StreamfinderExporter:
         """
         result: dict[int, list[dict]] = {}
         seen: dict[int, set[str]] = {}
-        for row in session.execute(text("SELECT title_id, vod_platform, vod_url FROM csfd_vod.dim_vods")):
+        rows = session.execute(text(
+            "SELECT title_id, vod_platform, vod_url FROM csfd_vod.dim_vods ORDER BY title_id, vod_id"
+        ))
+        for row in rows:
             if row[1] == "VOD":
                 continue
             title_id = row[0]
@@ -343,7 +364,7 @@ class StreamfinderExporter:
         sql = text("""
             SELECT title_id, author, review_text, stars
             FROM csfd_vod.dim_reviews
-            ORDER BY title_id, stars DESC NULLS LAST
+            ORDER BY title_id, stars DESC NULLS LAST, review_id
         """)
         for row in session.execute(sql):
             title_id = row[0]
