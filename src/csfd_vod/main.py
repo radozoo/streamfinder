@@ -15,6 +15,7 @@ from csfd_vod.transformation.parser import VODTitleParser
 from csfd_vod.transformation.list_parser import VODListParser
 from csfd_vod.loading.postgres_loader import PostgresLoader
 from csfd_vod.cache import HTMLCache
+from csfd_vod.parse_state import ParseState, plan_parse
 from csfd_vod.export.exporter import DataExporter
 from csfd_vod.export.dashboard_generator import DashboardGenerator
 from csfd_vod.export.streamfinder_exporter import StreamfinderExporter
@@ -249,12 +250,36 @@ def cmd_parse(args) -> dict:
         logger.error("cmd_parse_failed", run_id=run_id, reason="cache_empty")
         return {"success": False, "run_id": run_id, "reason": "cache_empty — run `csfd scrape` first"}
 
-    logger.info("stage_parse_start", run_id=run_id, count=len(urls))
+    # Only re-read what can actually have changed. A refresh touches a couple of
+    # hundred pages out of 51k; re-parsing the rest cost ~24 minutes and produced
+    # identical rows. See parse_state.py for what makes skipping safe — and for the
+    # two cases (parser changed, list page changed) that force a full pass anyway.
+    list_html_dir = Path(config.cache_dir) / "vod_lists"
+    plan = plan_parse(
+        cache=cache,
+        urls=urls,
+        list_pages=sorted(list_html_dir.glob("*.html")) if list_html_dir.exists() else [],
+        cache_dir=config.cache_dir,
+        selectors_path=config.selectors_path,
+        force_full=getattr(args, "full", False),
+    )
+    to_parse = plan["urls"]
+    logger.info("stage_parse_start", run_id=run_id, count=len(to_parse), total=len(urls),
+                full=plan["full"], skipped=plan["skipped"], reason=plan["reason"])
+
+    if not to_parse:
+        # Nothing moved since the last load. The DB already holds the answer.
+        ParseState(config.cache_dir).write(plan["fingerprint"], plan["started_at"])
+        logger.info("cmd_parse_noop", run_id=run_id, total=len(urls))
+        return {"success": True, "run_id": run_id, "stage": "complete", "parse_count": 0,
+                "skipped": plan["skipped"], "incremental": True,
+                "load_stats": {"loaded": 0, "skipped": 0, "errors": 0, "run_id": run_id}}
+
     parsed_titles = []
 
-    for i, url in enumerate(urls):
+    for i, url in enumerate(to_parse):
         if i % 10 == 0:
-            logger.info("stage_parse_progress", run_id=run_id, count=i, total=len(urls))
+            logger.info("stage_parse_progress", run_id=run_id, count=i, total=len(to_parse))
 
         html = cache.get(url)
         if not html:
@@ -265,14 +290,17 @@ def cmd_parse(args) -> dict:
         if title:
             parsed_titles.append(title)
 
-    logger.info("stage_parse_complete", run_id=run_id, parsed=len(parsed_titles), failed=len(urls) - len(parsed_titles))
+    logger.info("stage_parse_complete", run_id=run_id, parsed=len(parsed_titles),
+                failed=len(to_parse) - len(parsed_titles), skipped=plan["skipped"])
 
     if not parsed_titles:
         logger.error("cmd_parse_failed", run_id=run_id, reason="no_titles_parsed")
         return {"success": False, "run_id": run_id, "stage": "parse"}
 
-    # Merge list-page metadata (vod_date, distributor, list_type) into parsed titles
-    list_html_dir = Path(config.cache_dir) / "vod_lists"
+    # Merge list-page metadata (vod_date, distributor, list_type) into parsed titles.
+    # ALL list pages are scanned even on an incremental run — a title's vod_date may
+    # come from a listing downloaded months ago — but only the titles being parsed
+    # this round can match, so the merge stays scoped to them.
     if list_html_dir.exists():
         list_parser = VODListParser()
         # Build url → title index for fast lookup
@@ -316,7 +344,13 @@ def cmd_parse(args) -> dict:
     try:
         stats = _load_to_db(parsed_titles, config, run_id)
         logger.info("stage_load_complete", run_id=run_id, stats=stats)
-        return {"success": True, "run_id": run_id, "stage": "complete", "parse_count": len(parsed_titles), "load_stats": stats}
+        # Only now, and stamped with the time the run STARTED reading: a page written
+        # while this run was in flight must be picked up next time, not assumed done.
+        # Writing it after the load (never before) means a crashed run redoes its work.
+        ParseState(config.cache_dir).write(plan["fingerprint"], plan["started_at"])
+        return {"success": True, "run_id": run_id, "stage": "complete",
+                "parse_count": len(parsed_titles), "skipped": plan["skipped"],
+                "incremental": not plan["full"], "load_stats": stats}
     except Exception as e:
         logger.error("stage_load_failed", run_id=run_id, error=str(e))
         return {"success": False, "run_id": run_id, "stage": "load", "error": str(e)}
@@ -576,7 +610,7 @@ def cmd_update(args) -> dict:
         logger.info("cmd_update_dry_run", run_id=run_id, summary=summary)
         summary["dry_run"] = True
         return summary
-    parse_res = cmd_parse(argparse.Namespace(dry_run=False))
+    parse_res = cmd_parse(argparse.Namespace(dry_run=False, full=getattr(args, "full_parse", False)))
     summary["steps"]["parse"] = parse_res
     if not parse_res.get("success"):
         summary["success"] = False
@@ -652,6 +686,12 @@ def main():
     # -- parse --
     p_parse = subparsers.add_parser("parse", help="Parse cached HTML and load to database")
     p_parse.add_argument("--dry-run", action="store_true", help="Parse but don't write to database")
+    p_parse.add_argument(
+        "--full", action="store_true",
+        help="Re-parse every cached page, ignoring the incremental watermark. Happens "
+             "automatically when the parser, loader or selectors change; use this to "
+             "force it after a change the fingerprint cannot see (e.g. a rewritten cache).",
+    )
 
     # -- run --
     p_run = subparsers.add_parser("run", help="Full pipeline without cache (scrape + parse + load)")
@@ -686,6 +726,8 @@ def main():
     p_update.add_argument("--skip-refresh", action="store_true", help="Skip the refresh step")
     p_update.add_argument("--skip-enrich", action="store_true", help="Skip TMDB enrichment")
     p_update.add_argument("--skip-export", action="store_true", help="Skip the Streamfinder JSON export")
+    p_update.add_argument("--full-parse", action="store_true",
+                          help="Re-parse every cached page instead of only what changed")
     p_update.add_argument("--dry-run", action="store_true",
                           help="Discover + refresh into cache, but don't parse/load/enrich/export")
 
