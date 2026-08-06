@@ -39,7 +39,6 @@ function makeTitle(over: Partial<TitleIndex> = {}): TitleIndex {
 		platforms: ['Netflix'],
 		countries: ['USA'],
 		tags: [],
-		crew_ids: [],
 		vod_date: iso(5),
 		link: '',
 		root_id: 1,

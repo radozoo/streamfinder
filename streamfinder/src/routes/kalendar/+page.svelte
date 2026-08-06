@@ -9,7 +9,8 @@
 	import { goto, afterNavigate } from '$app/navigation';
 	import { fold } from '$lib/search';
 	import { favorites } from '$lib/favorites.svelte';
-	import { loadCrewIndex, isCrewLoaded } from '$lib/data/crew';
+	import { browser } from '$app/environment';
+	import { loadCrewIndex, loadCrewTitles, isCrewLoaded } from '$lib/data/crew';
 
 	let { data }: { data: PageData } = $props();
 
@@ -78,17 +79,26 @@
 		crewItems.length ? new Map(crewItems.map((c) => [c.id, c.name])) : null
 	);
 
+	// Which people worked on which title. Used to ride along in titles_index.json;
+	// now fetched with the crew list, since a crew filter needs both.
+	let crewTitles = $state<Map<number, number[]> | null>(null);
+
 	async function ensureCrewLoaded() {
-		if (isCrewLoaded() || crewLoading) return;
+		if (crewLoading) return;
+		if (isCrewLoaded() && crewTitles) return;
 		crewLoading = true;
 		try {
-			crewItems = await loadCrewIndex();
+			const [list, titles] = await Promise.all([loadCrewIndex(), loadCrewTitles()]);
+			crewItems = list;
+			crewTitles = titles;
 		} finally {
 			crewLoading = false;
 		}
 	}
 
-	if (untrack(() => data.initialCrew)?.length) ensureCrewLoaded();
+	// Browser only — this runs during init, which also happens on the server, where a
+	// relative fetch() throws and kills the render. See the note in katalog/+page.svelte.
+	if (browser && untrack(() => data.initialCrew)?.length) ensureCrewLoaded();
 
 	let minDate = $derived.by(() => {
 		const d = new Date();
@@ -185,7 +195,8 @@
 		ratingMin,
 		crew: selectedCrew,
 		favoritesOnly,
-		crewNames: crewIdToName
+		crewNames: crewIdToName,
+		crewTitles
 	}));
 
 	function passes(t: TitleIndex, f: typeof filterConfig, skip: string): boolean {
@@ -208,8 +219,8 @@
 		if (skip !== 'year' && f.yearTo < YEAR_MAX && (t.year ?? 9999) > f.yearTo) return false;
 		if (skip !== 'rating' && f.ratingMin > 0 && (t.rating ?? t.inherited_rating ?? 0) < f.ratingMin)
 			return false;
-		if (skip !== 'crew' && f.crew.length && f.crewNames) {
-			const names = (t.crew_ids ?? []).map((id) => f.crewNames!.get(id)).filter(Boolean);
+		if (skip !== 'crew' && f.crew.length && f.crewNames && f.crewTitles) {
+			const names = (f.crewTitles.get(t.id) ?? []).map((id) => f.crewNames!.get(id)).filter(Boolean);
 			if (!f.crew.some((name) => names.includes(name))) return false;
 		}
 		return true;

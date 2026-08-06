@@ -34,7 +34,6 @@ function makeTitle(over: Partial<TitleIndex> = {}): TitleIndex {
 		platforms: ['Netflix'],
 		countries: ['USA'],
 		tags: [],
-		crew_ids: [],
 		vod_date: '2024-01-01',
 		link: 'https://www.csfd.cz/film/1-test/prehled/',
 		root_id: 1,

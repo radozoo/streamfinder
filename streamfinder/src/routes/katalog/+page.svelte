@@ -12,7 +12,8 @@
 	import { fold } from '$lib/search';
 	import { favorites } from '$lib/favorites.svelte';
 	import { untrack } from 'svelte';
-	import { loadCrewIndex, isCrewLoaded } from '$lib/data/crew';
+	import { browser } from '$app/environment';
+	import { loadCrewIndex, loadCrewTitles, isCrewLoaded } from '$lib/data/crew';
 
 	let { data }: { data: PageData } = $props();
 
@@ -77,23 +78,43 @@
 	// ── Crew lazy loading ────────────────────────────────────────────────────
 	let crewItems = $state<CrewEntry[]>([]);
 	let crewLoading = $state(false);
-	let crewIdToName: Map<number, string> | null = null;
+	// $state, not plain lets. Both maps arrive asynchronously, and the grid is computed
+	// before the fetch resolves — so unless assigning them re-runs the filter, landing
+	// on a shared ?crew=… link silently shows the whole catalog. Measured with both as
+	// plain lets: 34 527 titles instead of 20.
+	//
+	// One reactive signal is technically enough (either assignment re-runs the
+	// predicate, which then reads both). They are both $state anyway, so the facet does
+	// not quietly depend on which of the two happens to be declared reactive.
+	let crewIdToName = $state<Map<number, string> | null>(null);
+	let crewTitles = $state<Map<number, number[]> | null>(null);
 
 	async function ensureCrewLoaded() {
-		if (isCrewLoaded()) return;
 		if (crewLoading) return;
+		if (isCrewLoaded() && crewTitles) return;
 		crewLoading = true;
 		try {
-			const list = await loadCrewIndex();
+			// The names feed the facet list, the map feeds the predicate — a crew filter
+			// needs both, so they are fetched together.
+			const [list, titles] = await Promise.all([loadCrewIndex(), loadCrewTitles()]);
 			crewItems = list;
 			crewIdToName = new Map(list.map((c) => [c.id, c.name]));
+			crewTitles = titles;
 		} finally {
 			crewLoading = false;
 		}
 	}
 
-	// If initial URL has crew params, load crew data immediately
-	if (snap.initialCrew && snap.initialCrew.length > 0) {
+	// Landing on a shared ?crew=… link: fetch the crew data straight away, or the grid
+	// renders unfiltered.
+	//
+	// Only in the browser. This runs during component init, which also happens on the
+	// server, and a relative fetch() there throws "Cannot call fetch eagerly during
+	// server-side rendering" — hard enough to take the whole dev server down. It went
+	// unnoticed because nothing ever cold-loaded a crew link, and because production
+	// serves Katalóg client-only through the SPA fallback, so there is no SSR to crash.
+	// It would surface the moment this route starts prerendering.
+	if (browser && snap.initialCrew && snap.initialCrew.length > 0) {
 		ensureCrewLoaded();
 	}
 
@@ -115,7 +136,8 @@
 		ratingMin,
 		crew: selectedCrew,
 		favoritesOnly,
-		crewNames: crewIdToName
+		crewNames: crewIdToName,
+		crewTitles
 	}));
 
 	function passes(t: TitleIndex, f: typeof filterConfig, skip: string): boolean {
@@ -143,8 +165,8 @@
 		if (skip !== 'year' && f.yearFrom > YEAR_MIN && (t.year ?? 0) < f.yearFrom) return false;
 		if (skip !== 'year' && f.yearTo < YEAR_MAX && (t.year ?? 9999) > f.yearTo) return false;
 		if (skip !== 'rating' && f.ratingMin > 0 && (t.rating ?? 0) < f.ratingMin) return false;
-		if (skip !== 'crew' && f.crew.length && f.crewNames) {
-			const names = (t.crew_ids ?? []).map((id) => f.crewNames!.get(id)).filter(Boolean);
+		if (skip !== 'crew' && f.crew.length && f.crewNames && f.crewTitles) {
+			const names = (f.crewTitles.get(t.id) ?? []).map((id) => f.crewNames!.get(id)).filter(Boolean);
 			if (!f.crew.some((name) => names.includes(name))) return false;
 		}
 		return true;

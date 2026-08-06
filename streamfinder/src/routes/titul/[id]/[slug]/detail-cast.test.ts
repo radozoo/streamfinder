@@ -34,7 +34,6 @@ function makeDetail(actorCount: number): TitleDetail {
 		tags: [],
 		countries: ['USA'],
 		platforms: ['Netflix'],
-		crew_ids: [],
 		vod_date: '2024-01-01',
 		link: '',
 		root_id: 1,

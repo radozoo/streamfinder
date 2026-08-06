@@ -8,6 +8,9 @@ Produces these outputs for the SvelteKit static site:
     one entry.
   - dimensions.json     flat lookup tables (genres, tags, platforms, countries, top crew)
   - crew_index.json     crew lookup table for lazy-loaded filtering (~26k entries)
+  - crew_titles.json    {index id: [crew id]} — the other half of the crew facet, also
+    lazy. Kept out of titles_index.json because it is incompressible integer soup:
+    inline it cost 3.97 MB gzipped per page view for a facet few visitors open.
 """
 
 import json
@@ -184,7 +187,15 @@ class StreamfinderExporter:
             # crew_index.json — lazy-loaded crew lookup for filtering
             _write(out / "crew_index.json", crew_list)
 
-            # titles_index.json — lightweight, used for grid/calendar (now includes crew_ids)
+            # crew_titles.json — which people worked on which title, keyed by the
+            # index's `id`. Deliberately NOT part of titles_index.json: it was 22% of
+            # that file's bytes and, being a mass of unrelated integers, the one part
+            # gzip could not compress — carrying it inline cost 3.97 MB on the wire
+            # (10.24 -> 6.28 MB) on every single page view, to serve one facet most
+            # visitors never touch. Loaded on demand next to crew_index.json instead.
+            _write(out / "crew_titles.json", {str(tid): ids for tid, ids in title_crew_map.items() if ids})
+
+            # titles_index.json — lightweight, used for grid/calendar
             index = self._build_index(
                 titles, genres_map, tags_map, countries_map, vods_map, tmdb_map,
                 title_crew_map, root_title_id, serial_agg, kviff_ids,
@@ -209,7 +220,7 @@ class StreamfinderExporter:
                 "total_titles": len(titles),
                 "crew_entries": len(crew_list),
                 "detail_files": len(detail),
-                "files_written": ["titles_index.json", f"detail/ ({len(detail)} files)", "dimensions.json", "crew_index.json"],
+                "files_written": ["titles_index.json", f"detail/ ({len(detail)} files)", "dimensions.json", "crew_index.json", "crew_titles.json"],
                 "export_timestamp": datetime.utcnow().isoformat() + "Z",
             }
             logger.info("streamfinder_export_complete", **stats)
@@ -567,7 +578,6 @@ class StreamfinderExporter:
                 "tags": tags_map.get(tid, []),
                 "countries": countries_map.get(tid, []),
                 "platforms": platforms,
-                "crew_ids": title_crew_map.get(tid, []),
                 "link": t["link"],
                 # ČSFD's own id. `id` above is a local SERIAL — it is fine as a URL
                 # segment, but it shifts if the database is ever rebuilt from scratch,

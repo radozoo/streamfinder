@@ -17,7 +17,6 @@ export interface TitleIndex {
 	tags: string[];
 	countries: string[];
 	platforms: string[];
-	crew_ids: number[];
 	link: string;
 	// Hierarchy — Work vs. Release
 	root_id: number | null;
