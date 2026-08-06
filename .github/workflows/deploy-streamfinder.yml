@@ -65,3 +65,17 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          # The action waits for Pages to finish publishing and gives up after 10
+          # minutes by default — then *cancels* the deployment, so the site silently
+          # keeps serving the previous build while the run shows a red X.
+          #
+          # We publish one JSON file per title (51k of them, ~110 MB), and Pages
+          # publishes per file, so the wait scales with the file count, not the bytes.
+          # The 1 Aug deploy of a 110.7 MB artifact finished in under a minute; two
+          # runs of a 110.8 MB one both hit the wall at exactly 10:00, which is what
+          # sitting just past the edge looks like.
+          #
+          # 30 minutes buys headroom without hiding a real hang: a genuinely stuck
+          # deployment still fails, just later.
+          timeout: 1800000
