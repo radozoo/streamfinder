@@ -86,6 +86,16 @@ for (const [label, path, mayLoadIndex, budgetKb] of ROUTES) {
 		}
 		check(total < budgetKb, `${label}: under its ${budgetKb} KB data budget`,
 			`${Math.round(total)} KB (${files || 'none'})`);
+
+		// dimensions.json is fetched by the ROOT layout, so it is the one file every
+		// route pays for — a title page included. It was 119 KB because the full tag
+		// list lived in it. Budgeted per-file, because the route totals above are far
+		// too loose to notice 108 KB coming back.
+		const dims = [...fetched.entries()].find(([f]) => f.startsWith('dimensions.json'));
+		if (dims) {
+			check(dims[1] / 1024 < 30, `${label}: dimensions.json stays small`,
+				`${Math.round(dims[1] / 1024)} KB`);
+		}
 	} catch (e) {
 		check(false, `${label}: loaded`, String(e).split('\n')[0]);
 	} finally {
@@ -112,6 +122,52 @@ try {
 	check(false, 'katalog renders', String(e).split('\n')[0]);
 } finally {
 	await context.close();
+}
+
+// The long tail of tags is the same story one level down. dimensions.json is fetched
+// by the ROOT layout, so unlike the index it was paid for on literally every route,
+// title pages included — and 26.4 of its 29.5 KB gzipped were 3,286 tags that exist
+// only so the tag search box can find them. The panels show the top 40 as a pill
+// cloud, which still ships inline; the rest now loads when someone opens that box.
+{
+	const context = await browser.newContext();
+	const page = await context.newPage();
+	let tagsFetched = false;
+	page.on('response', (r) => {
+		if (/\/data\/tags\.json/.test(r.url())) tagsFetched = true;
+	});
+	try {
+		await page.goto(`${ORIGIN}/katalog`, { waitUntil: 'domcontentloaded' });
+		await page.waitForSelector('a.poster-link', { timeout: 60_000 });
+		await page.waitForTimeout(1500);
+		check(!tagsFetched, 'the full tag list is not downloaded just to render the page');
+
+		// The dropdown toggles, so a single click can close what it just opened —
+		// same reason url-state.mjs retries.
+		const trigger = page.locator('button.filter-trigger').filter({ hasText: 'Tagy' }).first();
+		for (let i = 0; i < 4; i++) {
+			if ((await trigger.getAttribute('aria-expanded')) === 'true') break;
+			await trigger.click();
+			await page.waitForTimeout(400);
+		}
+
+		// The pill cloud has to work whether or not the fetch has landed, or the
+		// deferral cost a feature rather than saving bytes.
+		const pills = await page.locator('.filter-panel button.pill').count();
+		check(pills >= 20, 'the popular tags are browsable straight away', `${pills} pills`);
+
+		// And the long tail has to become searchable — the fetch is triggered by
+		// reaching for the facet at all (hover) or focusing its search box.
+		await page.locator('.filter-panel input.autocomplete-input').first().fill('kanibal');
+		await page.waitForTimeout(1500);
+		check(tagsFetched, 'opening the tag facet fetches the full list');
+		const hits = await page.locator('.autocomplete-results').count();
+		check(hits > 0, 'and a tag outside the top 40 becomes findable', 'searched "kanibal"');
+	} catch (e) {
+		check(false, 'tag facet flow completed', String(e).split('\n')[0]);
+	} finally {
+		await context.close();
+	}
 }
 
 await browser.close();

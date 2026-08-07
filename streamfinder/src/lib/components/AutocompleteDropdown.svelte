@@ -10,7 +10,8 @@
 		formatItem,
 		loading = false,
 		topItems,
-		topLabel = 'Nejčastější'
+		topLabel = 'Nejčastější',
+		onEngage = undefined
 	}: {
 		items: { name: string; role?: string; count?: number }[];
 		selected: string[];
@@ -19,6 +20,10 @@
 		placeholder?: string;
 		formatItem?: (item: { name: string; role?: string; count?: number }) => string;
 		loading?: boolean;
+		// Fired when the search box is focused. Lets an owner defer fetching the full
+		// list until someone actually intends to search it — the pill cloud above needs
+		// only the head of the list, so most visitors never trigger this.
+		onEngage?: () => void;
 		// When provided, these are shown as a toggle pill cloud while the search box
 		// is empty — a browsable set of the most common options next to free search.
 		topItems?: { name: string; count?: number; hit?: boolean }[];
@@ -73,6 +78,7 @@
 		type="text"
 		{placeholder}
 		bind:value={query}
+		onfocus={onEngage}
 	/>
 
 	{#if loading}

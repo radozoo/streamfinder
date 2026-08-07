@@ -30,6 +30,11 @@ from csfd_vod.refresh_state import read_refresh
 
 logger = get_logger(__name__)
 
+# How many tags dimensions.json carries. The facet panels show the top 40 as a pill
+# cloud; everything past that is only reachable through the search box, which loads
+# tags.json on demand.
+TAGS_IN_DIMENSIONS = 60
+
 _TMDB_IMG_BASE = "https://image.tmdb.org/t/p"
 
 
@@ -218,8 +223,10 @@ class StreamfinderExporter:
             _write_detail_shards(out / "detail", detail)
 
             # dimensions.json — sorted lists for facet panel (now includes top crew)
-            dimensions = self._build_dimensions(genres_map, tags_map, countries_map, vods_map, crew_list)
+            dimensions, all_tags = self._build_dimensions(
+                genres_map, tags_map, countries_map, vods_map)
             _write(out / "dimensions.json", dimensions)
+            _write(out / "tags.json", all_tags)
 
             # meta.json — the handful of whole-catalog facts the site chrome needs.
             # The footer's "last updated" was computed by scanning all 51k index
@@ -242,8 +249,9 @@ class StreamfinderExporter:
                 "output_dir": str(out.absolute()),
                 "total_titles": len(titles),
                 "crew_entries": len(crew_list),
+                "tag_entries": len(all_tags),
                 "detail_files": len(detail),
-                "files_written": ["titles_index.json", f"detail/ ({len(detail)} files)", "dimensions.json", "crew_index.json", "crew_titles.json", "meta.json"],
+                "files_written": ["titles_index.json", f"detail/ ({len(detail)} files)", "dimensions.json", "tags.json", "crew_index.json", "crew_titles.json", "meta.json"],
                 "export_timestamp": datetime.utcnow().isoformat() + "Z",
             }
             logger.info("streamfinder_export_complete", **stats)
@@ -783,9 +791,19 @@ class StreamfinderExporter:
         tags_map: dict,
         countries_map: dict,
         vods_map: dict,
-        crew_list: list[dict],
-    ) -> dict[str, list[dict]]:
-        """Sorted dimension lists for facet panels."""
+    ) -> tuple[dict[str, list[dict]], list[dict]]:
+        """Sorted dimension lists for facet panels, plus the full tag list separately.
+
+        dimensions.json is fetched by the root layout, so every visitor pays for it on
+        every route — including a single title page, which uses none of it. Of its
+        29.5 KB gzipped, 26.4 KB was 3,286 tags, and the panels show the top 40 as a
+        pill cloud; the rest exist only so the tag search box can find them. They ship
+        as their own file and load when someone actually opens that box, which is the
+        same deal crew_index.json already has.
+
+        `crew` is dropped entirely: it was the top 50 people, and nothing has read it
+        since the crew facet started loading crew_index.json.
+        """
         from collections import Counter
 
         def sorted_counts(values_per_title: dict) -> list[dict]:
@@ -795,13 +813,16 @@ class StreamfinderExporter:
         platform_counts: Counter = Counter(
             v["platform"] for vals in vods_map.values() for v in vals
         )
+        all_tags = sorted_counts(tags_map)
         return {
             "genres": sorted_counts(genres_map),
-            "tags": sorted_counts(tags_map),
+            # The browsable head of the list. The panels slice 40 off this themselves,
+            # so a few spare do no harm and leave room to widen the cloud without a
+            # pipeline change.
+            "tags": all_tags[:TAGS_IN_DIMENSIONS],
             "countries": sorted_counts(countries_map),
             "platforms": [{"name": k, "count": v} for k, v in platform_counts.most_common()],
-            "crew": [{"name": c["name"], "role": c["role"], "count": c["count"]} for c in crew_list[:50]],
-        }
+        }, all_tags
 
 
 def _write(path: Path, data: Any) -> None:

@@ -79,10 +79,11 @@ export interface Vod {
 
 export interface Dimensions {
 	genres: DimEntry[];
+	/** Only the head of the list — the browsable pill cloud. The full 3,286 live in
+	 *  tags.json and load on demand; see $lib/data/tags. */
 	tags: DimEntry[];
 	countries: DimEntry[];
 	platforms: DimEntry[];
-	crew: CrewDimEntry[];
 }
 
 export interface DimEntry {
@@ -90,11 +91,6 @@ export interface DimEntry {
 	count: number;
 }
 
-export interface CrewDimEntry {
-	name: string;
-	role: string;
-	count: number;
-}
 
 export interface CrewEntry {
 	id: number;

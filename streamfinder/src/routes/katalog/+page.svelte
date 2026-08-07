@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { PageData } from './$types';
-	import type { TitleIndex, CrewEntry } from '$lib/types';
+	import type { TitleIndex, CrewEntry, DimEntry } from '$lib/types';
 	import PosterCard from '$lib/components/PosterCard.svelte';
 	import FilterBar from '$lib/components/FilterBar.svelte';
 	import MobileFilterSheet from '$lib/components/MobileFilterSheet.svelte';
@@ -18,6 +18,7 @@
 	import { page as appPage } from '$app/state';
 	import { katalogFilters, EMPTY_PARAMS } from '$lib/filter-params';
 	import { loadCrewIndex, loadCrewTitles, isCrewLoaded } from '$lib/data/crew';
+	import { loadTags, areTagsLoaded } from '$lib/data/tags';
 
 	let { data }: { data: PageData } = $props();
 
@@ -285,7 +286,20 @@
 			hit: tagBase.some((t) => t.tags.includes(tag.name))
 		}))
 	);
-	let allTags = $derived(data.dimensions.tags);
+	// dimensions.json carries only the head of the tag list, so this starts as that
+	// and is replaced once someone opens the tag search box. $state, not $derived:
+	// the rest arrives asynchronously and the dropdown renders from it.
+	let allTags = $state<DimEntry[]>(untrack(() => data.dimensions.tags));
+	let tagsLoading = $state(false);
+	async function ensureTagsLoaded() {
+		if (areTagsLoaded() || tagsLoading) return;
+		tagsLoading = true;
+		try {
+			allTags = await loadTags();
+		} finally {
+			tagsLoading = false;
+		}
+	}
 
 	let typeOptions = $derived(
 		['film', 'seriál', 'tv film', 'pořad', 'krátký film'].filter((type) =>
@@ -408,6 +422,8 @@
 			countries={availableCountries}
 			tags={allTags}
 			tagsTop={popularTags}
+			onTagsEngage={ensureTagsLoaded}
+			{tagsLoading}
 			{typeOptions}
 			{crewItems}
 			{crewLoading}
@@ -476,6 +492,8 @@
 	countries={availableCountries}
 	tags={allTags}
 	tagsTop={popularTags}
+	onTagsEngage={ensureTagsLoaded}
+	{tagsLoading}
 	{typeOptions}
 	{crewItems}
 	{crewLoading}

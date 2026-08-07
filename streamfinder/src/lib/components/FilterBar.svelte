@@ -17,6 +17,8 @@
 		crewItems = [],
 		crewLoading = false,
 		onCrewHover,
+		onTagsEngage = undefined,
+		tagsLoading = false,
 		// Selected state
 		selectedGenres,
 		selectedPlatforms,
@@ -56,6 +58,9 @@
 		crewItems?: CrewEntry[];
 		crewLoading?: boolean;
 		onCrewHover?: () => void;
+		// Same deal as crew: the full tag list is fetched on demand.
+		onTagsEngage?: () => void;
+		tagsLoading?: boolean;
 		selectedGenres: string[];
 		selectedPlatforms: string[];
 		selectedCountries: string[];
@@ -162,17 +167,22 @@
 		<PillGrid items={typeItems} selected={selectedTypes} onToggle={onToggleType} />
 	</FilterDropdown>
 
-	<FilterDropdown label="Tagy" activeCount={selectedTags.length}>
-		<AutocompleteDropdown
-			items={tags}
-			topItems={tagsTop}
-			topLabel="Nejčastější tagy"
-			selected={selectedTags}
-			onSelect={onToggleTag}
-			onRemove={onToggleTag}
-			placeholder="Hledat tagy…"
-		/>
-	</FilterDropdown>
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div onmouseenter={onTagsEngage}>
+		<FilterDropdown label="Tagy" activeCount={selectedTags.length}>
+			<AutocompleteDropdown
+				items={tags}
+				topItems={tagsTop}
+				topLabel="Nejčastější tagy"
+				selected={selectedTags}
+				onSelect={onToggleTag}
+				onRemove={onToggleTag}
+				placeholder="Hledat tagy…"
+				loading={tagsLoading}
+				onEngage={onTagsEngage}
+			/>
+		</FilterDropdown>
+	</div>
 
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div onmouseenter={onCrewHover}>

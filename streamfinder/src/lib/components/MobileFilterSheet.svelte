@@ -29,6 +29,8 @@
 		crewLoading = false,
 		crewLoaded = false,
 		onLoadCrew,
+		onTagsEngage = undefined,
+		tagsLoading = false,
 		selectedGenres,
 		selectedPlatforms,
 		selectedCountries,
@@ -69,6 +71,8 @@
 		crewLoading?: boolean;
 		crewLoaded?: boolean;
 		onLoadCrew: () => void;
+		onTagsEngage?: () => void;
+		tagsLoading?: boolean;
 		selectedGenres: string[];
 		selectedPlatforms: string[];
 		selectedCountries: string[];
@@ -128,15 +132,18 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="sheet-backdrop"
-		onclick={() => (open = false)}
+		onclick={(e) => {
+			// Close only when the backdrop itself was hit. The alternative — closing on
+			// any click and stopping propagation inside the sheet — needs a click handler
+			// on the sheet, which is not an interactive control and should not have one.
+			if (e.target === e.currentTarget) open = false;
+		}}
 		onkeydown={(e) => e.key === 'Escape' && (open = false)}
 		role="presentation"
 		tabindex="-1"
 	>
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div
 			class="filter-sheet"
-			onclick={(e) => e.stopPropagation()}
 			role="dialog"
 			aria-modal="true"
 			aria-label="Filtry"
@@ -203,6 +210,8 @@
 						onSelect={onToggleTag}
 						onRemove={onToggleTag}
 						placeholder="Hledat tagy…"
+						loading={tagsLoading}
+						onEngage={onTagsEngage}
 					/>
 				</div>
 
