@@ -1,14 +1,16 @@
-import { describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test } from 'vitest';
 import { load } from './+page';
 import type { TitleIndex } from '$lib/types';
+import { __resetTitlesCache } from '$lib/data/titles';
 
 /**
  * The landing-page rails, tested through the REAL load() function.
  *
  * `import type { PageLoad } from './$types'` is erased at runtime, so load()'s only
- * runtime dependency is its `parent()` argument — stub that and these tests exercise
- * exactly the code the site runs. Re-implementing the selection here would test a
- * copy, which is how a rail drifts away from its guard without anyone noticing.
+ * runtime dependencies are the `parent()` and `fetch` it is handed — stub those and
+ * these tests exercise exactly the code the site runs. Re-implementing the selection
+ * here would test a copy, which is how a rail drifts away from its guard without
+ * anyone noticing.
  *
  * Every rule below is here because the carousel broke on it. Correcting votes_count
  * (previously truncated at its first thousands group) made five Nolan films sweep
@@ -51,8 +53,28 @@ function makeTitle(over: Partial<TitleIndex> = {}): TitleIndex {
 }
 
 const dimensions = { platforms: ['Netflix'], genres: ['Drama'], countries: [], tags: [], types: [] };
+
+/**
+ * load() takes the catalog from `fetch`, not from `parent()` — the layout stopped
+ * shipping the index to every route, so each route that browses it asks for it
+ * itself. Stubbing `fetch` keeps these tests running against the real load(); the
+ * stub is deliberately narrow so a load() that starts fetching something else fails
+ * loudly rather than silently receiving titles.
+ */
+// loadTitles caches module-wide, so without this every case after the first would
+// silently be ranking the FIRST case's catalog.
+beforeEach(() => __resetTitlesCache());
+
 const run = (titles: TitleIndex[]) =>
-	(load as any)({ parent: async () => ({ titles, dimensions }) }) as Promise<any>;
+	(load as any)({
+		parent: async () => ({ dimensions }),
+		fetch: async (url: string) => {
+			if (!String(url).includes('titles_index.json')) {
+				throw new Error(`unexpected fetch in load(): ${url}`);
+			}
+			return { json: async () => titles };
+		}
+	}) as Promise<any>;
 
 /** Enough filler for the carousel to have real choices to make. */
 const filler = (n: number, over: Partial<TitleIndex> = {}) =>

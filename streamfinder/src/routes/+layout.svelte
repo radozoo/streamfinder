@@ -5,10 +5,21 @@
 	import { favorites } from '$lib/favorites.svelte';
 	import '../app.css';
 	import SearchOverlay from '$lib/components/SearchOverlay.svelte';
+	import type { TitleIndex } from '$lib/types';
+	import { loadTitles } from '$lib/data/titles';
 
 	let { data, children } = $props();
 
 	let searchOpen = $state(false);
+
+	// Search needs the whole catalog; nothing else in the chrome does. Fetching it on
+	// open keeps it off every page view — on the routes that browse the catalog it is
+	// already cached, so this costs nothing there either.
+	let searchTitles = $state<TitleIndex[] | null>(null);
+	async function openSearch() {
+		searchOpen = true;
+		if (!searchTitles) searchTitles = await loadTitles();
+	}
 </script>
 
 <svelte:head>
@@ -28,7 +39,7 @@
 			Oblíbené{#if favorites.count}<span class="nav-count">{favorites.count}</span>{/if}
 		</a>
 	</div>
-	<button class="nav-search" onclick={() => (searchOpen = true)} aria-label="Hledat">
+	<button class="nav-search" onclick={openSearch} aria-label="Hledat">
 		<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 			<circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
 		</svg>
@@ -36,7 +47,7 @@
 </nav>
 
 {#if searchOpen}
-	<SearchOverlay titles={data.titles} onclose={() => (searchOpen = false)} />
+	<SearchOverlay titles={searchTitles ?? []} onclose={() => (searchOpen = false)} />
 {/if}
 
 <main>

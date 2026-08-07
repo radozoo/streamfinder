@@ -102,3 +102,10 @@ export interface CrewEntry {
 	role: string;
 	count: number;
 }
+
+/** Whole-catalog facts for the site chrome — see data/meta.json. */
+export interface SiteMeta {
+	last_vod_date: string | null;
+	title_count: number;
+	generated_at: string;
+}

@@ -1,7 +1,8 @@
 import type { PageLoad } from './$types';
+import { loadTitles } from '$lib/data/titles';
 
-export const load: PageLoad = async ({ parent, url }) => {
-	const { titles, dimensions } = await parent();
+export const load: PageLoad = async ({ parent, url, fetch }) => {
+	const [{ dimensions }, titles] = await Promise.all([parent(), loadTitles(fetch)]);
 
 	const validSorts = ['rating', 'year', 'vod_date', 'votes'] as const;
 	type SortKey = (typeof validSorts)[number];

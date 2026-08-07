@@ -11,6 +11,8 @@ Produces these outputs for the SvelteKit static site:
   - crew_titles.json    {index id: [crew id]} — the other half of the crew facet, also
     lazy. Kept out of titles_index.json because it is incompressible integer soup:
     inline it cost 3.97 MB gzipped per page view for a facet few visitors open.
+  - meta.json           whole-catalog facts for the site chrome (last update, counts),
+    so the layout does not need the index just to date the footer.
 """
 
 import json
@@ -214,13 +216,24 @@ class StreamfinderExporter:
             dimensions = self._build_dimensions(genres_map, tags_map, countries_map, vods_map, crew_list)
             _write(out / "dimensions.json", dimensions)
 
+            # meta.json — the handful of whole-catalog facts the site chrome needs.
+            # The footer's "last updated" was computed by scanning all 51k index
+            # entries, which is why the root layout downloaded the entire index on
+            # every route, including single title pages that use none of it. One
+            # number, precomputed, removes that reason.
+            _write(out / "meta.json", {
+                "last_vod_date": max((t["vod_date"] for t in titles if t["vod_date"]), default=None),
+                "title_count": len(titles),
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+            })
+
             stats = {
                 "success": True,
                 "output_dir": str(out.absolute()),
                 "total_titles": len(titles),
                 "crew_entries": len(crew_list),
                 "detail_files": len(detail),
-                "files_written": ["titles_index.json", f"detail/ ({len(detail)} files)", "dimensions.json", "crew_index.json", "crew_titles.json"],
+                "files_written": ["titles_index.json", f"detail/ ({len(detail)} files)", "dimensions.json", "crew_index.json", "crew_titles.json", "meta.json"],
                 "export_timestamp": datetime.utcnow().isoformat() + "Z",
             }
             logger.info("streamfinder_export_complete", **stats)

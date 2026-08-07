@@ -1,7 +1,10 @@
 import type { PageLoad } from './$types';
+import { loadTitles } from '$lib/data/titles';
 
-export const load: PageLoad = async ({ parent }) => {
-	const { titles, dimensions } = await parent();
+export const load: PageLoad = async ({ parent, fetch }) => {
+	// The home rails rank the whole catalog, so this route is one of the four that
+	// genuinely needs the index. It is no longer loaded by the layout on every route.
+	const [{ dimensions }, titles] = await Promise.all([parent(), loadTitles(fetch)]);
 
 	const today = new Date();
 	const daysAgo = (n: number) => {
