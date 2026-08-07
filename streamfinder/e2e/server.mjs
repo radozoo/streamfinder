@@ -24,6 +24,9 @@
  */
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { extname } from 'node:path';
 
 /** Is anything listening here? */
 function isFree(port) {
@@ -50,10 +53,83 @@ async function pickPort() {
 	throw new Error('no free port in 5300-5359');
 }
 
+/**
+ * Serve the production build the way GitHub Pages serves it.
+ *
+ * Two reasons this is not `vite dev` and not `vite preview`.
+ *
+ * Not dev: SvelteKit renders the first request on the server there, so a route's
+ * `load` fetches happen server-side and never reach the browser's network log. A
+ * title page reported "no data files" while it was in fact fetching its detail
+ * shard, and every payload budget passed while measuring nothing.
+ *
+ * Not preview: our non-prerendered routes (Katalóg, Kalendář, every title page) are
+ * served through a 404.html SPA fallback. GitHub Pages returns that file for unknown
+ * paths and the app boots; `vite preview` does not, so /katalog renders SvelteKit's
+ * "404 Not Found" there. Verified against the unmodified checkout — this is preview's
+ * behaviour, not a regression — but it makes preview useless for measuring exactly
+ * the routes we care about.
+ *
+ * So: a plain static file server with the fallback rule Pages uses.
+ */
+export async function startStaticServer() {
+	await new Promise((resolve, reject) => {
+		const build = spawn('npm', ['run', 'build'], { stdio: 'ignore' });
+		build.on('exit', (code) =>
+			code === 0 ? resolve() : reject(new Error(`build failed with code ${code}`))
+		);
+	});
+
+	const root = new URL('../build/', import.meta.url);
+	const TYPES = {
+		'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+		'.json': 'application/json', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+		'.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp',
+		'.woff2': 'font/woff2', '.xml': 'application/xml', '.txt': 'text/plain'
+	};
+
+	const port = await pickPort();
+	const server = createHttpServer(async (req, res) => {
+		const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+		const candidates = [
+			path.endsWith('/') ? path + 'index.html' : path,
+			path + '.html',
+			path + '/index.html'
+		];
+		for (const c of candidates) {
+			try {
+				const body = await readFile(new URL('.' + c, root));
+				res.writeHead(200, { 'content-type': TYPES[extname(c)] ?? 'application/octet-stream' });
+				return res.end(body);
+			} catch {
+				/* try the next shape */
+			}
+		}
+		// What Pages does: hand back 404.html and let the SPA route it.
+		try {
+			const body = await readFile(new URL('./404.html', root));
+			res.writeHead(404, { 'content-type': 'text/html' });
+			return res.end(body);
+		} catch {
+			res.writeHead(404).end('not found');
+		}
+	});
+
+	await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+	const origin = `http://localhost:${port}`;
+	const stop = () => server.close();
+	process.on('exit', stop);
+	return { origin, port, stop, tail: () => '', died: () => null };
+}
+
 export async function startDevServer(_ignoredLegacyPort) {
+	return startServer(['vite', 'dev', '--strictPort', '--port']);
+}
+
+async function startServer(argv) {
 	const port = await pickPort();
 	const origin = `http://localhost:${port}`;
-	const server = spawn('npx', ['vite', 'dev', '--port', String(port), '--strictPort'], {
+	const server = spawn('npx', [...argv, String(port)], {
 		stdio: ['ignore', 'pipe', 'pipe'],
 		detached: true
 	});
