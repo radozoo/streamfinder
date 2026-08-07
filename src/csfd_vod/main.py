@@ -12,7 +12,8 @@ from csfd_vod.logger import setup_logging, get_logger
 from csfd_vod.extraction.scraper import VODScraper
 from csfd_vod.extraction.rate_limiter import RateLimiter
 from csfd_vod.transformation.parser import VODTitleParser
-from csfd_vod.transformation.list_parser import VODListParser
+from csfd_vod.transformation.list_merge import merge_list_metadata
+from csfd_vod.list_index import ListIndex
 from csfd_vod.loading.postgres_loader import PostgresLoader
 from csfd_vod.cache import HTMLCache
 from csfd_vod.parse_state import ParseState, plan_parse
@@ -297,42 +298,16 @@ def cmd_parse(args) -> dict:
         logger.error("cmd_parse_failed", run_id=run_id, reason="no_titles_parsed")
         return {"success": False, "run_id": run_id, "stage": "parse"}
 
-    # Merge list-page metadata (vod_date, distributor, list_type) into parsed titles.
-    # ALL list pages are scanned even on an incremental run — a title's vod_date may
-    # come from a listing downloaded months ago — but only the titles being parsed
-    # this round can match, so the merge stays scoped to them.
+    # Merge list-page metadata (vod_date, distributor, list_type, platform) into the
+    # parsed titles. ALL listings are considered even on an incremental run — a
+    # title's vod_date may come from one downloaded years ago — but they are read
+    # from the cached index instead of re-parsed, which is the difference between
+    # 135 seconds of BeautifulSoup and a fraction of one. See list_index.py.
     if list_html_dir.exists():
-        list_parser = VODListParser()
-        # Build url → title index for fast lookup
-        title_by_url = {t.url_id: t for t in parsed_titles}
-        list_pages = sorted(list_html_dir.glob("*.html"))
-        logger.info("stage_list_parse_start", run_id=run_id, list_pages=len(list_pages))
-        matched = 0
-        for list_page in list_pages:
-            try:
-                html = list_page.read_text(encoding="utf-8")
-                entries = list_parser.parse(html, source=list_page.name)
-                for entry in entries:
-                    film_url = entry.get("film_url")
-                    if film_url and film_url in title_by_url:
-                        t = title_by_url[film_url]
-                        if not t.vod_date and entry.get("vod_date"):
-                            t.vod_date = entry["vod_date"]
-                        if not t.distributor and entry.get("distributor"):
-                            t.distributor = entry["distributor"]
-                        if not t.title_type and entry.get("list_type"):
-                            t.title_type = entry["list_type"]
-                        # Merge the platform from the /vod listing (union) — the
-                        # authoritative source for serials/episodes with no detail VOD box.
-                        if entry.get("platforms"):
-                            existing = [p.strip() for p in (t.vod_platforms or "").split(",") if p.strip()]
-                            for p in entry["platforms"]:
-                                if p not in existing:
-                                    existing.append(p)
-                            t.vod_platforms = ", ".join(existing)
-                        matched += 1
-            except Exception as e:
-                logger.warning("list_page_parse_error", path=str(list_page), error=str(e))
+        index = ListIndex(config.cache_dir, list_html_dir)
+        list_pages, list_stats = index.load(force_full=getattr(args, "full", False))
+        logger.info("stage_list_index_ready", run_id=run_id, **list_stats)
+        matched = merge_list_metadata(parsed_titles, list_pages)
         logger.info("stage_list_parse_complete", run_id=run_id, matched=matched)
 
     if args.dry_run:
