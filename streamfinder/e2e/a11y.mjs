@@ -20,13 +20,12 @@ import { pickShapes } from './shapes.mjs';
 
 const BLOCKING = new Set(['serious', 'critical']);
 
-// Known, accepted, and to be ratcheted down — the same shape as the budgets in the
-// data gates. `--text-muted` (#4a5568) reaches only 2.2:1 on the card background
-// against the 4.5:1 WCAG AA asks for, and it is one token used on years, counts and
-// captions across every page. Changing it is a palette decision, not a bug fix, so
-// it is recorded rather than silently tolerated: everything else still fails the run,
-// and when the token is fixed this entry comes out and the rule starts blocking.
-const KNOWN = new Set(['color-contrast']);
+// Nothing is excused any more. This held `color-contrast` while --text-muted sat at
+// 2.23:1 — recorded rather than silently tolerated, on the understanding that the
+// entry comes out the moment the palette is fixed. It has been (both quiet tiers
+// moved; see app.css), so the rule blocks again and the set is empty. Add to it only
+// with the same deal: a written reason and an intent to remove it.
+const KNOWN = new Set([]);
 
 // The server picks its own free port; using its origin keeps this run off
 // whatever else happens to be listening on this machine.

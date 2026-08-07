@@ -470,8 +470,14 @@
 		margin-bottom: 1rem;
 	}
 
+	/* Quieter than the genre pills beside it, but a colour rather than opacity.
+	   opacity: 0.6 blended --text-secondary down to 3.39:1 — the same mistake as the
+	   inherited rating, where dimming something readable is the whole failure.
+	   Not var(--text-muted) either: a pill sits on --navy-600, which is lighter than
+	   the panels the tiers were tuned against, and muted reaches only 4.37 there.
+	   This is the quietest value that still clears 4.5:1 on that background. */
 	.country-pill {
-		opacity: 0.6;
+		color: #8892ab;
 	}
 
 	.detail-plot {

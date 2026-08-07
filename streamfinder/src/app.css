@@ -10,8 +10,17 @@
 	--amber: #f5a623;
 	--amber-dim: #c47e0c;
 	--text-primary: #f0ede8;
-	--text-secondary: #8a92a6;
-	--text-muted: #4a5568;
+	/* The two quiet tiers are set by WCAG AA's 4.5:1 floor, measured on --navy-700
+	   (#131d33) — the tightest of the three backgrounds text sits on, and where 378
+	   of 449 contrast failures were. --text-muted was #4a5568 at 2.23:1, which is
+	   under half the requirement: 12px text that is hard to read on a bright screen
+	   for anyone, not only for people with impaired vision.
+	   Both tiers moved, not just the failing one. The floor (4.5) sits just under
+	   what --text-secondary already was (5.39), so lifting muted alone would have
+	   landed the two within 0.9 of each other — passing the rule while collapsing a
+	   distinction the layouts use in 57 places. Now: 14.4 / 7.6 / 4.8. */
+	--text-secondary: #a6aec2;
+	--text-muted: #7d8aa4;
 	--border: rgba(255, 255, 255, 0.08);
 	--card-bg: rgba(13, 21, 38, 0.8);
 	--radius: 8px;
@@ -143,10 +152,13 @@ a {
 /* Inherited rating (episode with no own score, borrowed from série/seriál):
    muted and lighter so it reads as a hint, never as the episode's own rating.
    The "≈" prefix in the markup reinforces that it's approximate. */
+/* No opacity here. It used to be 0.85, which no palette can rescue — even at the
+   secondary colour the blend tops out at 4.25:1. The "≈" prefix and the tooltip
+   already say the rating is inherited; dimming it was a second, redundant signal
+   that cost legibility to repeat something the markup states. */
 .poster-card .card-rating.inherited {
 	font-weight: 600;
 	color: var(--text-muted);
-	opacity: 0.85;
 }
 
 .poster-card .card-year {
