@@ -109,8 +109,9 @@ def _sort_platforms(names: list[str]) -> list[str]:
 
 
 def _root_platforms(titles: list[dict], vods_map: dict) -> dict[int, list[str]]:
-    """Map root_id → the top-level work's platforms, so episodes with no platform of
-    their own inherit their serial's (they drop on the same service)."""
+    """Map root_id → the top-level work's platforms, merged into each of its episodes:
+    an episode drops on the service the show is on, whether or not its own /vod row
+    happens to say so."""
     out: dict[int, list[str]] = {}
     for t in titles:
         if t["root_id"] is not None and t["root_id"] == t["csfd_id"]:
@@ -131,9 +132,41 @@ def _root_vods(titles: list[dict], vods_map: dict) -> dict[int, list[dict]]:
     return out
 
 
+def _merge_vods(own: list[dict], inherited: list[dict]) -> list[dict]:
+    """Own entries first, then any platform they do not already name."""
+    out = list(own)
+    have = {v["platform"] for v in own}
+    for v in inherited:
+        if v["platform"] not in have:
+            out.append(v)
+            have.add(v["platform"])
+    return out
+
+
+def _child_vods(titles: list[dict], vods_map: dict) -> dict[int, list[dict]]:
+    """Map root_id → its children's [{platform, url}], merged into the serial's own.
+
+    The index already merges children's platforms into a serial's card; without the
+    same merge here, the card would name HBO Max while the page it opens offered only
+    the reseller the serial's own /vod row happened to list.
+    """
+    out: dict[int, list[dict]] = {}
+    for t in titles:
+        rid = t["root_id"]
+        if rid is not None and rid != t["csfd_id"]:
+            bucket = out.setdefault(rid, [])
+            have = {v["platform"] for v in bucket}
+            for v in vods_map.get(t["title_id"], []):
+                if v["platform"] not in have:
+                    bucket.append(v)
+                    have.add(v["platform"])
+    return out
+
+
 def _child_platforms(titles: list[dict], vods_map: dict) -> dict[int, list[str]]:
-    """Map root_id → union of its children's platforms, so a serial with no platform
-    of its own (never listed on /vod as a whole) still shows where its episodes air."""
+    """Map root_id → union of its children's platforms, merged into the serial: it is
+    where the show actually airs, and the serial's own /vod row often lists only
+    resellers (or nothing, when it was never listed as a whole)."""
     out: dict[int, list[str]] = {}
     for t in titles:
         rid = t["root_id"]
@@ -223,8 +256,7 @@ class StreamfinderExporter:
             _write_detail_shards(out / "detail", detail)
 
             # dimensions.json — sorted lists for facet panel (now includes top crew)
-            dimensions, all_tags = self._build_dimensions(
-                genres_map, tags_map, countries_map, vods_map)
+            dimensions, all_tags = self._build_dimensions(index)
             _write(out / "dimensions.json", dimensions)
             _write(out / "tags.json", all_tags)
 
@@ -604,16 +636,19 @@ class StreamfinderExporter:
             if not poster and not is_toplevel:
                 poster = root_poster.get(rid)  # episode/season inherits serial artwork
             platforms = [v["platform"] for v in vods_map.get(tid, [])]
-            if is_toplevel:
-                # A serial never listed on /vod as a whole shows where its episodes air.
-                if not platforms:
-                    platforms = child_platforms.get(rid, [])
-            else:
-                # An episode belongs to its show — the serial's platform list is
-                # fuller and primary-first; fall back to the episode's own only if
-                # the serial has none (its /vod entry is often just an IPTV reseller).
-                platforms = root_platforms.get(rid) or platforms
-            platforms = _sort_platforms(platforms)
+            # A work and its episodes are listed on /vod separately, and neither row is
+            # reliably the complete one — so they are merged rather than one replacing
+            # the other, and _sort_platforms decides what leads.
+            #
+            # This used to prefer the serial outright, on the theory that an episode's
+            # own entry "is often just an IPTV reseller". It is frequently the reverse:
+            # Klara's episodes say HBO Max while the serial row says Lepší.TV, Star Trek:
+            # Lower Decks' say Paramount+ against the serial's Prime Video, The Walking
+            # Dead: Dead City's say AMC+ against Telly. Preferring either side discards a
+            # true answer — 1,181 episodes were shown a platform they are not on, and 443
+            # serials hid one their own episodes carry.
+            inherited = child_platforms.get(rid, []) if is_toplevel else root_platforms.get(rid, [])
+            platforms = _sort_platforms(platforms + inherited)
             entry = {
                 "id": tid,
                 "slug": _slug(t["title"], t["year"]),
@@ -707,6 +742,7 @@ class StreamfinderExporter:
         """Full detail dict keyed by '{title_id}-{slug}'."""
         root_poster = _root_posters(titles, tmdb_map)
         root_vods = _root_vods(titles, vods_map)
+        child_vods = _child_vods(titles, vods_map)
         # An episode's page links back to its serial, and the route needs the slug —
         # root_title_id alone would force the page to load the whole title index just
         # to resolve one name.
@@ -724,9 +760,13 @@ class StreamfinderExporter:
             poster = _poster_url(t, tmdb_map)
             if not poster and not is_toplevel:
                 poster = root_poster.get(rid)  # episode/season inherits serial artwork
-            vods = vods_map.get(tid, [])
-            if not is_toplevel:
-                vods = root_vods.get(rid) or vods  # episode shows its show's services
+            # Same merge as the index, but carrying each service's link. Where both the
+            # episode and its serial name a platform, the episode's own link wins — it is
+            # the more specific of the two.
+            vods = _merge_vods(
+                vods_map.get(tid, []),
+                (child_vods if is_toplevel else root_vods).get(rid, []),
+            )
             vods = sorted(vods, key=lambda v: _PLATFORM_PRIORITY.get(v["platform"], 900))
             backdrop = (
                 f"{_TMDB_IMG_BASE}/original{tmdb['backdrop_path']}"
@@ -785,14 +825,14 @@ class StreamfinderExporter:
                     detail[f"{tid}-{slug}"]["episodes"] = episodes_map[rid]
         return detail
 
-    def _build_dimensions(
-        self,
-        genres_map: dict,
-        tags_map: dict,
-        countries_map: dict,
-        vods_map: dict,
-    ) -> tuple[dict[str, list[dict]], list[dict]]:
+    def _build_dimensions(self, index: list[dict]) -> tuple[dict[str, list[dict]], list[dict]]:
         """Sorted dimension lists for facet panels, plus the full tag list separately.
+
+        Counted from the built index rather than from the raw dimension tables, because
+        the index is what the filters match against. Platforms are merged between a
+        serial and its episodes on the way into the index, so counting the tables gave a
+        pill that disagreed with its own result set — "Lepší.TV 3 758" opening 6 377
+        titles. 52 of 69 platforms were off.
 
         dimensions.json is fetched by the root layout, so every visitor pays for it on
         every route — including a single title page, which uses none of it. Of its
@@ -806,22 +846,19 @@ class StreamfinderExporter:
         """
         from collections import Counter
 
-        def sorted_counts(values_per_title: dict) -> list[dict]:
-            counts: Counter = Counter(v for vals in values_per_title.values() for v in vals)
+        def sorted_counts(field: str) -> list[dict]:
+            counts: Counter = Counter(v for entry in index for v in entry.get(field, []))
             return [{"name": k, "count": v} for k, v in counts.most_common()]
 
-        platform_counts: Counter = Counter(
-            v["platform"] for vals in vods_map.values() for v in vals
-        )
-        all_tags = sorted_counts(tags_map)
+        all_tags = sorted_counts("tags")
         return {
-            "genres": sorted_counts(genres_map),
+            "genres": sorted_counts("genres"),
             # The browsable head of the list. The panels slice 40 off this themselves,
             # so a few spare do no harm and leave room to widen the cloud without a
             # pipeline change.
             "tags": all_tags[:TAGS_IN_DIMENSIONS],
-            "countries": sorted_counts(countries_map),
-            "platforms": [{"name": k, "count": v} for k, v in platform_counts.most_common()],
+            "countries": sorted_counts("countries"),
+            "platforms": sorted_counts("platforms"),
         }, all_tags
 
 

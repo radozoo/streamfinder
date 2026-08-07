@@ -11,7 +11,8 @@ Two independent checks run in the pipeline:
          missing one means a month or code path silently dropped it — the exact
          failure that lost True Detective and Twin Peaks);
        - a loose minimum work count;
-       - no title renders twice (the ČSFD slug-drift duplicate bug, §11).
+       - no title renders twice (the ČSFD slug-drift duplicate bug, §11);
+       - every facet pill counts the results it actually opens.
      Any failure exits non-zero so it can gate a deploy.
 
 Canaries are matched by their CSFD root id (the first /film/{id} segment), which is
@@ -82,6 +83,29 @@ def _duplicate_problems(titles: list) -> list[str]:
     return problems
 
 
+def _facet_problems(titles: list, dimensions_path: Path) -> list[str]:
+    """Every facet pill must count the results it opens.
+
+    The filters match against titles_index.json; the pill's number came from the
+    dimension tables instead. Those two drifted apart the moment a title's platforms
+    started being merged between a serial and its episodes on the way into the index —
+    "Lepší.TV 3 758" opened 6 377 titles, and 52 of 69 platforms were off. Asserted on
+    the shipped artifact, because nothing about the site looks wrong when it happens.
+    """
+    if not dimensions_path.exists():
+        return [f"dimensions not found: {dimensions_path}"]
+    dims = json.loads(dimensions_path.read_text(encoding="utf-8"))
+    problems = []
+    for field in ("genres", "countries", "platforms"):
+        actual = Counter(v for t in titles for v in (t.get(field) or []))
+        for entry in dims.get(field, []):
+            got = actual.get(entry["name"], 0)
+            if got != entry["count"]:
+                problems.append(
+                    f"{field}: pill '{entry['name']}' says {entry['count']} but the index holds {got}")
+    return problems[:5] + ([f"...and {len(problems) - 5} more"] if len(problems) > 5 else [])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--index", type=Path, default=DEFAULT_INDEX)
@@ -107,6 +131,14 @@ def main() -> int:
         present = csfd_id in root_ids
         print(f"{'ok  ' if present else 'FAIL'}: [{csfd_id}] {label}")
         ok = ok and present
+
+    facet_problems = _facet_problems(titles, args.index.parent / "dimensions.json")
+    if facet_problems:
+        for p in facet_problems:
+            print(f"FAIL: {p}")
+        ok = False
+    else:
+        print("ok  : every facet count matches the index it filters")
 
     dup_problems = _duplicate_problems(titles)
     if dup_problems:

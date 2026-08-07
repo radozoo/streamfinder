@@ -210,3 +210,47 @@ slug, and adds the duplicate.
   filters non-overview URLs, so even a stray duplicate can never reach the site.
 - Display name comes from the `title` column, **not** the slug — so keeping either
   row shows the correct name; the slug only affects the outbound ČSFD link.
+
+---
+
+## 12. A work and its episodes are two /vod rows — merge them, don't pick one
+
+ČSFD lists a serial and each of its episodes separately, and **neither row is
+reliably the complete one**. The episode's row usually comes from the /vod feed that
+announced the release and names the service it premiered on; the serial's own page
+often lists whoever resells the whole show, which in Czechia is frequently an IPTV
+reseller (Lepší.TV, SledovaniTV, Telly, Oneplay).
+
+The exporter used to prefer the serial and discard the episode's own platform, on
+the theory that an episode's entry "is often just an IPTV reseller". It is
+**frequently the reverse**:
+
+| title | the episode says | the serial says |
+|---|---|---|
+| Klara S02E01 | HBO Max | Lepší.TV |
+| Star Trek: Lower Decks S04E08 | Paramount+ | Prime Video, SkyShowtime |
+| The Walking Dead: Dead City S03E03 | AMC+ | Telly |
+| Trollové — Série 1 | Netflix | SledovaniTV |
+
+That cost **1,181 episodes** a platform they are actually on, and hid one from
+**443 serials** that their own episodes carry.
+
+**Rule: merge both directions, never replace.** `_merge_vods` unions the two lists
+and `_sort_platforms` decides what leads — the priority table already ranks real
+services above resellers, so the primary is what the "Sledovat na …" button offers.
+The merge is purely additive: it introduced **no platform name that was not already
+in the catalog**, and removed nothing.
+
+Note that an episode page frequently has **no `.film-vod-list` box at all** (Klara's
+has none). Its platform comes from the /vod listing via `list_merge`, including the
+distributor fallback — which is why §5's "the listing is authoritative for
+serials/episodes" matters here too.
+
+### 12b. Facet counts must be computed from the exported index
+
+Because platforms are merged on the way into `titles_index.json`, counting them from
+the dimension tables gave a pill that disagreed with its own result set — "Lepší.TV
+3 758" opening 6,377 titles, with 52 of 69 platforms off. `_build_dimensions` now
+counts from the built index, which is what the filters match against.
+`scripts/check_completeness.py` asserts it on the shipped artifact, because nothing
+about the site looks wrong when it drifts.
