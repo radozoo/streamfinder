@@ -4,6 +4,7 @@
 	import type { TitleIndex, CrewEntry } from '$lib/types';
 	import PosterCard from '$lib/components/PosterCard.svelte';
 	import FilterBar from '$lib/components/FilterBar.svelte';
+	import MobileFilterSheet from '$lib/components/MobileFilterSheet.svelte';
 	import ActiveFilters from '$lib/components/ActiveFilters.svelte';
 	import { base } from '$app/paths';
 	import { goto, afterNavigate } from '$app/navigation';
@@ -375,6 +376,12 @@
 		return chips;
 	});
 
+	// The chip list above already enumerates every active filter except the search box,
+	// so the badge count and the "is anything set?" flag are derived from it rather than
+	// from a third copy of the same list, which is exactly the kind of thing that drifts.
+	let activeFilterCount = $derived(activeFilterList.length + (searchQuery.trim() ? 1 : 0));
+	let hasFilters = $derived(activeFilterCount > 0);
+
 	function removeFilter(category: string, value: string) {
 		if (category === 'Žánr') selectedGenres = selectedGenres.filter((g) => g !== value);
 		else if (category === 'Platforma') selectedPlatforms = selectedPlatforms.filter((p) => p !== value);
@@ -561,6 +568,46 @@
 	</div>
 </div>
 
+
+
+<!-- Under 640px the FilterBar row is display:none, so this is the only way to the
+     filters on a phone. Kalendář had no replacement at all until now. -->
+<MobileFilterSheet
+	genres={availableGenres}
+	platforms={availablePlatforms}
+	countries={availableCountries}
+	tags={allTags}
+	tagsTop={popularTags}
+	{typeOptions}
+	{crewItems}
+	{crewLoading}
+	crewLoaded={isCrewLoaded()}
+	onLoadCrew={ensureCrewLoaded}
+	{selectedGenres}
+	{selectedPlatforms}
+	{selectedCountries}
+	{selectedTags}
+	{selectedTypes}
+	{selectedCrew}
+	{yearFrom}
+	{yearTo}
+	{ratingMin}
+	yearMin={YEAR_MIN}
+	yearMax={YEAR_MAX}
+	onToggleGenre={(name) => (selectedGenres = toggle(selectedGenres, name))}
+	onTogglePlatform={(name) => (selectedPlatforms = toggle(selectedPlatforms, name))}
+	onToggleCountry={(name) => (selectedCountries = toggle(selectedCountries, name))}
+	onToggleTag={(name) => (selectedTags = toggle(selectedTags, name))}
+	onToggleType={(name) => (selectedTypes = toggle(selectedTypes, name))}
+	onSelectCrew={(name) => (selectedCrew = [...selectedCrew, name])}
+	onRemoveCrew={(name) => (selectedCrew = selectedCrew.filter((c) => c !== name))}
+	onYearChange={(from, to) => { yearFrom = from; yearTo = to; }}
+	onRatingChange={(from) => { ratingMin = from; }}
+	{activeFilterCount}
+	{hasFilters}
+	onClearAll={clearAll}
+	resultCount={totalTitles}
+/>
 
 <style>
 	.kal-header {
