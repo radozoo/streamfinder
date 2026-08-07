@@ -88,7 +88,13 @@ export function kalendarFilters(sp: URLSearchParams) {
 	const raw = sp.get('days');
 	return {
 		...common(sp),
-		days: raw ? Math.min(Math.max(Number(raw), KALENDAR_DEFAULT_DAYS), 365) : KALENDAR_DEFAULT_DAYS
+		days: raw ? Math.min(Math.max(Number(raw), KALENDAR_DEFAULT_DAYS), 365) : KALENDAR_DEFAULT_DAYS,
+		// Whether the "Připravované" section is expanded. It belongs in the URL for the
+		// same reason the filters do: the component is torn down and rebuilt on every
+		// navigation, so anything held only in component state is gone by the time the
+		// visitor presses Back — and the section vanishing changes the page height,
+		// which drops the restored scroll position into days weeks earlier.
+		upcoming: sp.get('upcoming') === '1'
 	};
 }
 

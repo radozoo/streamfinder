@@ -194,6 +194,60 @@ try {
 	check(false, 'favourites flow completed', String(e).split('\n')[0]);
 }
 
+// ── Kalendář: the "Připravované" section survives Back ────────────────────────
+// It was the one piece of state on that page held only in the component, so a
+// navigation destroyed it. Opening it, reading an upcoming title and pressing Back
+// collapsed the section — and because the page then lost ~8,000px of content, the
+// restored scroll position landed weeks earlier in the past. The visitor's own words:
+// "vrátim sa na tituly o mesiac spätky".
+console.log('\nKalendář: Připravované');
+
+try {
+	await page.goto(`${ORIGIN}/kalendar`, { waitUntil: 'domcontentloaded' });
+	await page.waitForSelector('.upcoming-toggle');
+	// The toggle is in the server-rendered HTML before its handler exists; clicking a
+	// button that is present but not yet hydrated does nothing at all.
+	await page.waitForTimeout(1500);
+	await page.locator('.upcoming-toggle').click();
+	await page.waitForTimeout(2200); // the reveal scroll is smooth; let it settle
+
+	const openY = await page.evaluate(() => Math.round(window.scrollY));
+	const blocks = await page.locator('.day-block.is-upcoming').count();
+	check(page.url().includes('upcoming=1'), 'opening the section reaches the URL', page.url().replace(ORIGIN, ''));
+	check(blocks > 0, 'the section renders upcoming days', `${blocks} day(s)`);
+	check(openY > 500, 'opening reveals the nearest upcoming day rather than the far end', `scrollY ${openY}`);
+
+	// Click a link that is already on screen. Clicking one that is not makes the
+	// browser scroll to it first, which is then the position Back restores — the
+	// mistake that made this look like a scroll-restoration bug when it is not.
+	const link = await page.evaluateHandle(() =>
+		[...document.querySelectorAll('.day-block.is-upcoming a[href*="/titul/"]')].find((a) => {
+			const r = a.getBoundingClientRect();
+			return r.top > 80 && r.bottom < window.innerHeight - 80;
+		}) ?? null
+	);
+	await link.asElement().click();
+	await page.waitForURL(/\/titul\//);
+	await page.waitForTimeout(500);
+
+	await page.goBack();
+	await page.waitForSelector('.upcoming-toggle', { timeout: 15_000 });
+	await page.waitForTimeout(1200);
+
+	check((await page.locator('.upcoming-toggle.open').count()) === 1, 'Back leaves the section open');
+	check((await page.locator('.day-block.is-upcoming').count()) === blocks, 'Back restores every upcoming day');
+	const backY = await page.evaluate(() => Math.round(window.scrollY));
+	check(Math.abs(backY - openY) < 150, 'Back restores the scroll position', `${openY} → ${backY}`);
+
+	// A shared link has to arrive in the same state.
+	await page.goto(`${ORIGIN}/kalendar?upcoming=1`, { waitUntil: 'domcontentloaded' });
+	await page.waitForSelector('.upcoming-toggle');
+	await page.waitForTimeout(1500);
+	check((await page.locator('.upcoming-toggle.open').count()) === 1, 'a shared ?upcoming=1 link opens the section');
+} catch (e) {
+	check(false, 'Připravované flow completed', String(e).split('\n')[0]);
+}
+
 check(errors.length === 0, 'no uncaught errors', errors.join(' | ') || 'none');
 
 await browser.close();

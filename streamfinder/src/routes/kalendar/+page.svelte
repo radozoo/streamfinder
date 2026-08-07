@@ -121,7 +121,20 @@
 	// URL was never written and filters vanished on Back. afterNavigate fires once
 	// the initial navigation is done, which is exactly when the router is ready.
 	let routerReady = $state(false);
-	afterNavigate(() => (routerReady = true));
+	// Expanding "Připravované" now writes ?upcoming=1, and that is a real navigation
+	// which re-renders the timeline — so a scroll started before it lands gets
+	// cancelled by the re-render, and the visitor is left at the far-future end of a
+	// section they just opened. The reveal therefore waits for the navigation it
+	// caused. Back arrives here too, but with nothing pending, which leaves the
+	// browser's own scroll restoration alone — the whole point of the fix.
+	let revealPending = false;
+	afterNavigate(async () => {
+		routerReady = true;
+		if (!revealPending) return;
+		revealPending = false;
+		await tick();
+		revealSoonestUpcoming();
+	});
 
 	// ── URL sync (single source of truth: state → URL) ────────────────────────
 	$effect(() => {
@@ -134,6 +147,7 @@
 		if (selectedTags.length) params.set('tag', selectedTags.join(','));
 		if (selectedTypes.length) params.set('type', selectedTypes.join(','));
 		if (favoritesOnly) params.set('fav', '1');
+		if (upcomingOpen) params.set('upcoming', '1');
 		for (const name of selectedCrew) params.append('crew', name);
 		if (yearFrom > YEAR_MIN) params.set('yearFrom', String(yearFrom));
 		if (yearTo < YEAR_MAX) params.set('yearTo', String(yearTo));
@@ -257,7 +271,9 @@
 	});
 
 	// ── Upcoming (future) releases — opt-in section above today ────────────────
-	let upcomingOpen = $state(false);
+	// Seeded from the URL, and written back below, so that Back returns to the
+	// section the visitor was actually reading.
+	let upcomingOpen = $state(initial.upcoming);
 	let upcomingGroups = $derived.by((): DayGroup[] => {
 		const map = new Map<string, TitleIndex[]>();
 		for (const t of data.titles) {
@@ -277,14 +293,17 @@
 	let upcomingCount = $derived(upcomingGroups.reduce((s, g) => s + g.titles.length, 0));
 
 	// Reveal tomorrow on expand; further-out days are above it (scroll up).
-	async function toggleUpcoming() {
-		upcomingOpen = !upcomingOpen;
-		if (!upcomingOpen) return;
-		await tick();
+	function revealSoonestUpcoming() {
 		const soonest = upcomingGroups.at(-1)?.date; // descending → last group is nearest today
 		if (soonest) {
 			document.getElementById('day-' + soonest)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 		}
+	}
+
+	function toggleUpcoming() {
+		upcomingOpen = !upcomingOpen;
+		// Handled in afterNavigate, once the ?upcoming=1 navigation has re-rendered.
+		revealPending = upcomingOpen;
 	}
 
 	// ── Stats ─────────────────────────────────────────────────────────────────
