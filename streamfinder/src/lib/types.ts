@@ -105,7 +105,11 @@ export interface CrewEntry {
 
 /** Whole-catalog facts for the site chrome — see data/meta.json. */
 export interface SiteMeta {
+	/** Newest release date in the catalog — usually in the FUTURE. Not an update time. */
 	last_vod_date: string | null;
 	title_count: number;
+	/** When ČSFD was last successfully scraped. Null until an `update` run records one. */
+	last_refresh_at: string | null;
+	/** When these JSON files were written — moves on a standalone export too. */
 	generated_at: string;
 }

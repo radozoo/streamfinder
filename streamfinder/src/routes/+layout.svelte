@@ -20,6 +20,24 @@
 		searchOpen = true;
 		if (!searchTitles) searchTitles = await loadTitles();
 	}
+
+	// The time zone is pinned rather than left to the visitor's machine. Every page
+	// here is prerendered, so this string is baked at build time in CI (UTC) and then
+	// produced again during hydration in the browser — two different zones would mean
+	// two different strings, which is a hydration mismatch and a visible flicker.
+	// Europe/Prague is also simply the right zone to read a Czech catalog in.
+	const refreshedAt = $derived(
+		data.lastRefresh
+			? new Date(data.lastRefresh).toLocaleString('cs-CZ', {
+					day: 'numeric',
+					month: 'long',
+					year: 'numeric',
+					hour: '2-digit',
+					minute: '2-digit',
+					timeZone: 'Europe/Prague'
+				})
+			: null
+	);
 </script>
 
 <svelte:head>
@@ -59,9 +77,11 @@
 		<span class="footer-brand">Streamfinder</span>
 		<span class="footer-sep">&middot;</span>
 		<span class="footer-attr">Data z <a href="https://www.csfd.cz" target="_blank" rel="noopener">CSFD.cz</a> &amp; <a href="https://www.themoviedb.org" target="_blank" rel="noopener">TMDB</a></span>
-		{#if data.lastUpdate}
+		{#if refreshedAt}
 			<span class="footer-sep">&middot;</span>
-			<span class="footer-update">Poslední aktualizace: {new Date(data.lastUpdate).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+			<span class="footer-update">
+				Data aktualizována <time datetime={data.lastRefresh}>{refreshedAt}</time>
+			</span>
 		{/if}
 	</div>
 </footer>

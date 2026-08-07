@@ -22,5 +22,5 @@ export const load: LayoutLoad = async ({ fetch }) => {
 	const dimensions: Dimensions = await dimsRes.json();
 	const meta: SiteMeta = await metaRes.json();
 
-	return { dimensions, meta, lastUpdate: meta.last_vod_date };
+	return { dimensions, meta, lastRefresh: meta.last_refresh_at ?? null };
 };
