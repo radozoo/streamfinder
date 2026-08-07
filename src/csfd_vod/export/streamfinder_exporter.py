@@ -26,6 +26,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 
 from csfd_vod.logger import get_logger
+from csfd_vod.refresh_state import read_refresh
 
 logger = get_logger(__name__)
 
@@ -150,9 +151,13 @@ class StreamfinderExporter:
     # Public API
     # ------------------------------------------------------------------
 
-    def export(self, output_dir: str) -> dict[str, Any]:
+    def export(self, output_dir: str, cache_dir: str | None = None) -> dict[str, Any]:
         """
         Export 4 JSON files to output_dir/.
+
+        `cache_dir` is only read from, for the last-refresh stamp `update` leaves
+        there. Without it meta.json simply carries no refresh time, rather than
+        substituting one of the timestamps that does not mean the same thing.
 
         Returns stats dict.
         """
@@ -221,9 +226,14 @@ class StreamfinderExporter:
             # entries, which is why the root layout downloaded the entire index on
             # every route, including single title pages that use none of it. One
             # number, precomputed, removes that reason.
+            # `last_refresh_at` is when ČSFD was last actually scraped, which is what
+            # the footer means by "last updated" — not `generated_at` (when this file
+            # was written, which a standalone export moves without fetching anything)
+            # and emphatically not `last_vod_date`, which is a future release date.
             _write(out / "meta.json", {
                 "last_vod_date": max((t["vod_date"] for t in titles if t["vod_date"]), default=None),
                 "title_count": len(titles),
+                "last_refresh_at": read_refresh(cache_dir) if cache_dir else None,
                 "generated_at": datetime.utcnow().isoformat() + "Z",
             })
 

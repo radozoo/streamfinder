@@ -17,6 +17,7 @@ from csfd_vod.list_index import ListIndex
 from csfd_vod.loading.postgres_loader import PostgresLoader
 from csfd_vod.cache import HTMLCache
 from csfd_vod.parse_state import ParseState, plan_parse
+from csfd_vod.refresh_state import write_refresh
 from csfd_vod.export.exporter import DataExporter
 from csfd_vod.export.dashboard_generator import DashboardGenerator
 from csfd_vod.export.streamfinder_exporter import StreamfinderExporter
@@ -458,7 +459,7 @@ def cmd_streamfinder(args) -> dict:
     config = load_config_from_env()
     exporter = StreamfinderExporter(config.database.connection_string)
     logger.info("cmd_streamfinder_start", output_dir=args.output_dir)
-    return exporter.export(args.output_dir)
+    return exporter.export(args.output_dir, cache_dir=config.cache_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +611,13 @@ def cmd_update(args) -> dict:
     # ── 4. enrich (missing only) ──────────────────────────────────────────────
     if not args.skip_enrich:
         summary["steps"]["enrich"] = cmd_enrich(argparse.Namespace(limit=None, force=False))
+
+    # ── 4b. record that a refresh actually happened ───────────────────────────
+    # Written before the export, which copies it into meta.json for the site footer.
+    # Guarded on the fetching streams: `update --skip-discover --skip-refresh` just
+    # re-exports what was already there, and must not date-stamp it as fresh.
+    if not (args.skip_discover and args.skip_refresh):
+        summary["steps"]["refreshed_at"] = write_refresh(config.cache_dir)
 
     # ── 5. export Streamfinder JSON ───────────────────────────────────────────
     if not args.skip_export:
