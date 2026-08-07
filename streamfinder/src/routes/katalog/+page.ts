@@ -1,48 +1,12 @@
 import type { PageLoad } from './$types';
 import { loadTitles } from '$lib/data/titles';
 
-export const load: PageLoad = async ({ parent, url, fetch }) => {
+/**
+ * Deliberately does NOT read url.searchParams — that is what stopped this page from
+ * prerendering. The component reads the query string from page.url instead; see
+ * $lib/filter-params for why that is the right place and not merely a workaround.
+ */
+export const load: PageLoad = async ({ parent, fetch }) => {
 	const [{ dimensions }, titles] = await Promise.all([parent(), loadTitles(fetch)]);
-
-	const validSorts = ['rating', 'year', 'vod_date', 'votes'] as const;
-	type SortKey = (typeof validSorts)[number];
-
-	function get(key: string): string | null {
-		try { return url.searchParams.get(key); } catch { return null; }
-	}
-
-	function parseNum(s: string | null): number | null {
-		if (!s) return null;
-		const n = parseInt(s, 10);
-		return isNaN(n) ? null : n;
-	}
-
-	const sortParam = get('sort');
-
-	// crew uses repeated params (?crew=A&crew=B) to handle names with commas
-	const crewParams = url.searchParams.getAll('crew').filter(Boolean);
-
-	// "Přidáno na VOD" window in days; only accept the known presets
-	const validRecency = [7, 30, 90, 180, 365, 730, 1095];
-	const recencyParam = parseNum(get('added'));
-
-	return {
-		titles,
-		dimensions,
-		initialQuery: get('q') ?? '',
-		initialGenres: get('genre')?.split(',').filter(Boolean) ?? [],
-		initialPlatforms: get('platform')?.split(',').filter(Boolean) ?? [],
-		initialCountries: get('country')?.split(',').filter(Boolean) ?? [],
-		initialTags: get('tag')?.split(',').filter(Boolean) ?? [],
-		// Comma-separated like the other facets. A bare ?type=film still works,
-		// so links shared while this was single-select keep resolving.
-		initialFavoritesOnly: get('fav') === '1',
-		initialTypes: get('type')?.split(',').filter(Boolean) ?? [],
-		initialYearFrom: parseNum(get('yearFrom')),
-		initialYearTo: parseNum(get('yearTo')),
-		initialRatingMin: parseNum(get('ratingMin')),
-		initialSort: (validSorts.includes(sortParam as SortKey) ? sortParam : 'vod_date') as SortKey,
-		initialCrew: crewParams,
-		initialRecency: recencyParam && validRecency.includes(recencyParam) ? recencyParam : 0,
-	};
+	return { titles, dimensions };
 };

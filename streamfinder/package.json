@@ -16,8 +16,9 @@
     "test:smoke": "node e2e/smoke.mjs",
     "test:a11y": "node e2e/a11y.mjs",
     "test:crew": "node e2e/crew-facet.mjs",
-    "test:ux": "npm run test:e2e && npm run test:smoke && npm run test:crew && npm run test:payload && npm run test:a11y",
-    "test:payload": "node e2e/payload.mjs"
+    "test:ux": "npm run test:e2e && npm run test:smoke && npm run test:crew && npm run test:payload && npm run test:prerender && npm run test:a11y",
+    "test:payload": "node e2e/payload.mjs",
+    "test:prerender": "node e2e/prerender.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",

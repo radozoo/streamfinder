@@ -13,6 +13,9 @@
 	import { favorites } from '$lib/favorites.svelte';
 	import { untrack } from 'svelte';
 	import { browser } from '$app/environment';
+	// Aliased: this file already has a `page` — the pagination counter.
+	import { page as appPage } from '$app/state';
+	import { katalogFilters, EMPTY_PARAMS } from '$lib/filter-params';
 	import { loadCrewIndex, loadCrewTitles, isCrewLoaded } from '$lib/data/crew';
 
 	let { data }: { data: PageData } = $props();
@@ -21,22 +24,28 @@
 	const YEAR_MIN = 1920;
 	const YEAR_MAX = 2026;
 
-	const snap = untrack(() => data);
+	// ── Filter state, seeded from the URL ─────────────────────────────────────
+	// Read here rather than in load(): a load() that touches url.searchParams cannot
+	// be prerendered, which is why this page used to answer with 404.html. On the
+	// server there is no query string to read — the prerendered file is the unfiltered
+	// page — and the browser seeds from the real URL on hydration.
+	// untrack: seed once, then own the state. Without it a navigation that updates
+	// `page` would reset every filter the visitor has set.
+	const initial = untrack(() => katalogFilters(browser ? appPage.url.searchParams : EMPTY_PARAMS));
 
-	// ── Filter state ──────────────────────────────────────────────────────────
-	let searchQuery = $state(snap.initialQuery ?? '');
-	let selectedGenres = $state<string[]>(snap.initialGenres ?? []);
-	let selectedPlatforms = $state<string[]>(snap.initialPlatforms ?? []);
-	let selectedCountries = $state<string[]>(snap.initialCountries ?? []);
-	let selectedTags = $state<string[]>(snap.initialTags ?? []);
-	let selectedTypes = $state<string[]>(snap.initialTypes ?? []);
-	let selectedCrew = $state<string[]>(snap.initialCrew ?? []);
-	let favoritesOnly = $state<boolean>(snap.initialFavoritesOnly ?? false);
-	let yearFrom = $state<number>(snap.initialYearFrom ?? YEAR_MIN);
-	let yearTo = $state<number>(snap.initialYearTo ?? YEAR_MAX);
-	let ratingMin = $state<number>(snap.initialRatingMin ?? 0);
-	let recencyDays = $state<number>(snap.initialRecency ?? 0);
-	let sortBy = $state<'rating' | 'year' | 'vod_date' | 'votes'>(snap.initialSort ?? 'vod_date');
+	let searchQuery = $state(initial.query);
+	let selectedGenres = $state<string[]>(initial.genres);
+	let selectedPlatforms = $state<string[]>(initial.platforms);
+	let selectedCountries = $state<string[]>(initial.countries);
+	let selectedTags = $state<string[]>(initial.tags);
+	let selectedTypes = $state<string[]>(initial.types);
+	let selectedCrew = $state<string[]>(initial.crew);
+	let favoritesOnly = $state<boolean>(initial.favoritesOnly);
+	let yearFrom = $state<number>(initial.yearFrom ?? YEAR_MIN);
+	let yearTo = $state<number>(initial.yearTo ?? YEAR_MAX);
+	let ratingMin = $state<number>(initial.ratingMin ?? 0);
+	let recencyDays = $state<number>(initial.recency);
+	let sortBy = $state<'rating' | 'year' | 'vod_date' | 'votes'>(initial.sort);
 
 	// ── "Přidáno na VOD" recency presets ─────────────────────────────────────
 	// Mutually exclusive windows → single-select. A work passes if its most recent
@@ -114,7 +123,7 @@
 	// unnoticed because nothing ever cold-loaded a crew link, and because production
 	// serves Katalóg client-only through the SPA fallback, so there is no SSR to crash.
 	// It would surface the moment this route starts prerendering.
-	if (browser && snap.initialCrew && snap.initialCrew.length > 0) {
+	if (browser && initial.crew.length > 0) {
 		ensureCrewLoaded();
 	}
 

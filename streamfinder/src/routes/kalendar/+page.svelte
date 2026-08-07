@@ -10,6 +10,8 @@
 	import { fold } from '$lib/search';
 	import { favorites } from '$lib/favorites.svelte';
 	import { browser } from '$app/environment';
+	import { page } from '$app/state';
+	import { kalendarFilters, KALENDAR_DEFAULT_DAYS, EMPTY_PARAMS } from '$lib/filter-params';
 	import { loadCrewIndex, loadCrewTitles, isCrewLoaded } from '$lib/data/crew';
 
 	let { data }: { data: PageData } = $props();
@@ -17,7 +19,7 @@
 	// ── Date constants ────────────────────────────────────────────────────────
 	const TODAY = new Date().toISOString().slice(0, 10);
 	const MAX_DAYS = 365;
-	const DEFAULT_DAYS = 28;
+	const DEFAULT_DAYS = KALENDAR_DEFAULT_DAYS;
 
 	const CS_MONTHS = ['ledna','února','března','dubna','května','června','července','srpna','září','října','listopadu','prosince'];
 	const CS_DAYS = ['Neděle','Pondělí','Úterý','Středa','Čtvrtek','Pátek','Sobota'];
@@ -54,22 +56,28 @@
 	const YEAR_MIN = 1920;
 	const YEAR_MAX = 2026;
 
-	// ── Reactive state ────────────────────────────────────────────────────────
-	// untrack: seed once from URL params, then manage locally.
-	// Without untrack, SvelteKit navigation updating `data` would re-initialize state.
-	let daysBack = $state<number>(untrack(() => data.initialDays));
+	// ── Reactive state, seeded from the URL ───────────────────────────────────
+	// Read here rather than in load(): a load() that touches url.searchParams cannot
+	// be prerendered, which is why this page used to answer with 404.html. On the
+	// server there is no query string — the prerendered file is the unfiltered page —
+	// and the browser seeds from the real URL on hydration.
+	// untrack: seed once, then own the state. Without it a navigation that updates
+	// `page` would reset every filter the visitor has set.
+	const initial = untrack(() => kalendarFilters(browser ? page.url.searchParams : EMPTY_PARAMS));
+
+	let daysBack = $state<number>(initial.days);
 	// Full filter set — identical to Katalog.
-	let searchQuery = $state(untrack(() => data.initialQuery ?? ''));
-	let selectedGenres = $state<string[]>(untrack(() => data.initialGenres ?? []));
-	let selectedPlatforms = $state<string[]>(untrack(() => data.initialPlatforms ?? []));
-	let selectedCountries = $state<string[]>(untrack(() => data.initialCountries ?? []));
-	let selectedTags = $state<string[]>(untrack(() => data.initialTags ?? []));
-	let selectedTypes = $state<string[]>(untrack(() => data.initialTypes ?? []));
-	let selectedCrew = $state<string[]>(untrack(() => data.initialCrew ?? []));
-	let favoritesOnly = $state<boolean>(data.initialFavoritesOnly ?? false);
-	let yearFrom = $state<number>(untrack(() => data.initialYearFrom ?? YEAR_MIN));
-	let yearTo = $state<number>(untrack(() => data.initialYearTo ?? YEAR_MAX));
-	let ratingMin = $state<number>(untrack(() => data.initialRatingMin ?? 0));
+	let searchQuery = $state(initial.query);
+	let selectedGenres = $state<string[]>(initial.genres);
+	let selectedPlatforms = $state<string[]>(initial.platforms);
+	let selectedCountries = $state<string[]>(initial.countries);
+	let selectedTags = $state<string[]>(initial.tags);
+	let selectedTypes = $state<string[]>(initial.types);
+	let selectedCrew = $state<string[]>(initial.crew);
+	let favoritesOnly = $state<boolean>(initial.favoritesOnly);
+	let yearFrom = $state<number>(initial.yearFrom ?? YEAR_MIN);
+	let yearTo = $state<number>(initial.yearTo ?? YEAR_MAX);
+	let ratingMin = $state<number>(initial.ratingMin ?? 0);
 	let filterPanelOpen = $state(false);
 
 	// ── Crew lazy loading (same as Katalog) ───────────────────────────────────
@@ -98,7 +106,7 @@
 
 	// Browser only — this runs during init, which also happens on the server, where a
 	// relative fetch() throws and kills the render. See the note in katalog/+page.svelte.
-	if (browser && untrack(() => data.initialCrew)?.length) ensureCrewLoaded();
+	if (browser && initial.crew.length) ensureCrewLoaded();
 
 	let minDate = $derived.by(() => {
 		const d = new Date();
