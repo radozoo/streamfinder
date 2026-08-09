@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily catalog refresh. Canonical copy — install with:
+
+      cp scripts/bi.revolt.streamfinder.refresh.plist ~/Library/LaunchAgents/
+      launchctl bootstrap gui/$UID ~/Library/LaunchAgents/bi.revolt.streamfinder.refresh.plist
+
+  An Agent, not a Daemon: it needs the logged-in user's keychain to get a push token,
+  and its Playwright browsers live in that user's cache.
+
+  StartCalendarInterval, not StartInterval: on a laptop that sleeps through 08:00,
+  launchd runs the job once on the next wake. cron would simply skip the day, which
+  is how a "daily" refresh quietly becomes a weekly one.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>bi.revolt.streamfinder.refresh</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/radozoo/dev/csfd/scripts/refresh.sh</string>
+	</array>
+
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key><integer>8</integer>
+		<key>Minute</key><integer>0</integer>
+	</dict>
+
+	<!-- The script keeps its own timestamped log; these two catch what happens
+	     before it can, which is exactly where the previous attempt died (TCC
+	     refused launchd access to the repo and the failure appeared only here). -->
+	<key>StandardOutPath</key>
+	<string>/Users/radozoo/dev/csfd/logs/refresh/launchd.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/radozoo/dev/csfd/logs/refresh/launchd.err.log</string>
+
+	<key>WorkingDirectory</key>
+	<string>/Users/radozoo/dev/csfd</string>
+
+	<!-- Twenty minutes of scraping must not compete with whatever the human is
+	     doing. Background gets it throttled CPU and low-priority IO. -->
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+
+	<key>RunAtLoad</key>
+	<false/>
+</dict>
+</plist>
