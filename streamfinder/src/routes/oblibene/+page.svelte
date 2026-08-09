@@ -4,8 +4,40 @@
 	import PosterCard from '$lib/components/PosterCard.svelte';
 	import { favorites } from '$lib/favorites.svelte';
 	import { base } from '$app/paths';
+	import { replaceState } from '$app/navigation';
+	import { onMount } from 'svelte';
 
 	let { data }: { data: PageData } = $props();
+
+	let copied = $state(false);
+	let linking = $state(false);
+
+	// A pairing link lands here as `#sync=<key>`. Consumed on arrival: the key is
+	// adopted, the two lists merge, and the fragment is stripped so the secret does
+	// not sit in the address bar or get copied out of it by accident.
+	onMount(async () => {
+		const key = new URLSearchParams(location.hash.slice(1)).get('sync');
+		if (!key) return;
+		linking = true;
+		await favorites.linkTo(key);
+		linking = false;
+		// SvelteKit's replaceState, never the browser's — the raw one wipes the router
+		// index and breaks Back. See src/lib/history-api.test.ts.
+		replaceState(location.pathname + location.search, {});
+	});
+
+	async function copyPairingLink() {
+		const url = favorites.pairingUrl;
+		if (!url) return;
+		try {
+			await navigator.clipboard.writeText(url);
+			copied = true;
+			setTimeout(() => (copied = false), 2000);
+		} catch {
+			// Clipboard is blocked outside a secure context and in some mobile browsers.
+			// The link is visible on screen and selectable, so this is not a dead end.
+		}
+	}
 
 	// csfd_id → title, built once. Favourites are stored as ids, so the page is a
 	// lookup: whatever is in the list and still in the catalog gets rendered.
@@ -69,7 +101,7 @@
 				{:else}
 					{favorites.count}
 					{favorites.count === 1 ? 'titul' : favorites.count < 5 ? 'tituly' : 'titulů'}
-					· uloženo jen v tomto prohlížeči
+					· {favorites.syncEnabled ? 'synchronizováno mezi zařízeními' : 'uloženo jen v tomto prohlížeči'}
 				{/if}
 			</p>
 		</div>
@@ -93,6 +125,52 @@
 
 	{#if importNote}<p class="fav-note">{importNote}</p>{/if}
 	{#if importError}<p class="fav-note error">{importError}</p>{/if}
+
+	<section class="sync" aria-label="Synchronizace mezi zařízeními">
+		{#if linking}
+			<p class="sync-line">Připojuji zařízení…</p>
+		{:else if !favorites.syncEnabled}
+			<div class="sync-off">
+				<p class="sync-line">
+					<strong>Chcete seznam i v mobilu?</strong> Zapnutím se uloží na server pod náhodným
+					tajným klíčem — bez jména, bez účtu, bez e-mailu. Dokud ji nezapnete, zůstávají
+					oblíbené jen v tomto prohlížeči.
+				</p>
+				<button class="fav-tool" type="button" onclick={() => favorites.enableSync()}>
+					Zapnout synchronizaci
+				</button>
+			</div>
+		{:else}
+			<div class="sync-on">
+				<p class="sync-line">
+					<span class="dot" class:err={favorites.syncState === 'error'}></span>
+					{#if favorites.syncState === 'busy'}
+						Synchronizuji…
+					{:else if favorites.syncState === 'error'}
+						Nepodařilo se spojit se serverem — seznam v tomto prohlížeči je v pořádku a
+						zkusím to znovu při dalším načtení.
+					{:else}
+						Synchronizace zapnutá.
+					{/if}
+				</p>
+
+				<p class="sync-hint">
+					Otevřete tento odkaz na dalším zařízení a seznamy se spojí. Kdo ho má, vidí a mění
+					vaše oblíbené — posílejte ho jen sobě.
+				</p>
+				<div class="sync-link">
+					<code>{favorites.pairingUrl}</code>
+					<button class="fav-tool" type="button" onclick={copyPairingLink}>
+						{copied ? 'Zkopírováno' : 'Kopírovat'}
+					</button>
+				</div>
+
+				<button class="sync-unlink" type="button" onclick={() => favorites.unlink()}>
+					Odpojit toto zařízení
+				</button>
+			</div>
+		{/if}
+	</section>
 
 	{#if items.length}
 		<div class="fav-grid">
@@ -159,6 +237,85 @@
 	.fav-tool:hover {
 		color: var(--text-primary);
 		border-color: var(--navy-500);
+	}
+
+	.sync {
+		margin: 0 0 1.5rem;
+		padding: 0.9rem 1rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--navy-800, rgba(8, 14, 30, 0.35));
+	}
+
+	.sync-off {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+
+	.sync-line {
+		font-size: 0.85rem;
+		color: var(--text-secondary);
+		max-width: 46rem;
+	}
+
+	.sync-hint {
+		margin-top: 0.5rem;
+		font-size: 0.78rem;
+		color: var(--text-secondary);
+	}
+
+	/* Quiet when it works, coral when it does not — the state only needs to be
+	   noticeable in the case the visitor can act on. */
+	.dot {
+		display: inline-block;
+		width: 7px;
+		height: 7px;
+		border-radius: 50%;
+		margin-right: 0.4rem;
+		background: #34d399;
+	}
+
+	.dot.err {
+		background: #fb7185;
+	}
+
+	.sync-link {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.5rem;
+	}
+
+	.sync-link code {
+		flex: 1;
+		min-width: 0;
+		overflow-x: auto;
+		white-space: nowrap;
+		font-size: 0.75rem;
+		padding: 0.4rem 0.6rem;
+		border-radius: var(--radius-sm);
+		background: var(--navy-900, rgba(0, 0, 0, 0.25));
+		border: 1px solid var(--border);
+		color: var(--text-secondary);
+	}
+
+	.sync-unlink {
+		margin-top: 0.75rem;
+		font: inherit;
+		font-size: 0.78rem;
+		background: none;
+		border: 0;
+		padding: 0;
+		color: var(--text-secondary);
+		text-decoration: underline;
+		cursor: pointer;
+	}
+
+	.sync-unlink:hover {
+		color: #fb7185;
 	}
 
 	.fav-grid {
