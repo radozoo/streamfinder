@@ -3,6 +3,7 @@
 	import type { PageData } from './$types';
 	import type { TitleIndex, CrewEntry, DimEntry } from '$lib/types';
 	import PosterCard from '$lib/components/PosterCard.svelte';
+	import { typeRuns } from '$lib/type-runs';
 	import FilterBar from '$lib/components/FilterBar.svelte';
 	import MobileFilterSheet from '$lib/components/MobileFilterSheet.svelte';
 	import ActiveFilters from '$lib/components/ActiveFilters.svelte';
@@ -531,13 +532,23 @@
 
 				{#if group.titles.length > 0}
 					<div class="filmstrip scroll-row">
-						{#each group.titles as title (title.id)}
-							<PosterCard
-								{title}
-								serialTitle={title.root_title_id != null
-									? byId.get(title.root_title_id)?.title
-									: undefined}
-							/>
+						{#each typeRuns(group.titles) as run (run.type)}
+							<section class="type-run" aria-label="{run.heading} — {group.label}">
+								<div class="type-run-head">
+									{run.heading}
+									<span class="type-run-count">{run.titles.length}</span>
+								</div>
+								<div class="type-run-cards">
+									{#each run.titles as title (title.id)}
+										<PosterCard
+											{title}
+											serialTitle={title.root_title_id != null
+												? byId.get(title.root_title_id)?.title
+												: undefined}
+										/>
+									{/each}
+								</div>
+							</section>
 						{/each}
 					</div>
 				{:else}
@@ -812,6 +823,42 @@
 		font-size: 0.75rem;
 		color: var(--text-muted);
 		margin-left: auto;
+	}
+
+	/* The strip's children are runs of one type, not cards. `.scroll-row .poster-card`
+	   in app.css is a descendant rule, so the card width survives the extra level. */
+	.type-run {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+
+	/* The hairline separates, the gap does the real work — a rule alone reads as a
+	   table border at this density. */
+	.type-run + .type-run {
+		margin-left: 0.6rem;
+		padding-left: 1.1rem;
+		border-left: 1px solid var(--border);
+	}
+
+	.type-run-head {
+		font-size: 0.68rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--text-secondary);
+		white-space: nowrap;
+	}
+
+	.type-run-count {
+		margin-left: 0.3rem;
+		font-weight: 400;
+		opacity: 0.65;
+	}
+
+	.type-run-cards {
+		display: flex;
+		gap: 1rem;
 	}
 
 	.filmstrip :global(.poster-card) {
