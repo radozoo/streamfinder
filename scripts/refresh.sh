@@ -30,6 +30,18 @@ PG_CTL="/opt/homebrew/bin/pg_ctl"
 PG_ISREADY="/opt/homebrew/bin/pg_isready"
 PGDATA="/Users/radozoo/postgres_data"
 
+# launchd hands a job almost no environment, and with an empty LANG/LC_ALL macOS goes
+# multithreaded while looking a locale up — inside postmaster's own startup, which it
+# refuses to survive:
+#   FATAL:  postmaster became multithreaded during startup
+#   HINT:   Set the LC_ALL environment variable to a valid locale.
+# This is exactly how the 2026-08-18 run died, and why it took until then: it was the
+# first scheduled run that actually had to START postgres. Every earlier one found it
+# already up — brought up by hand from a shell that had LANG set — so the fragile path
+# never ran under launchd at all. C.UTF-8 is what that shell uses.
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+
 LOG_DIR="$REPO/logs/refresh"
 STAMP="$(date +%Y-%m-%dT%H%M%S)"
 LOG="$LOG_DIR/$STAMP.log"
