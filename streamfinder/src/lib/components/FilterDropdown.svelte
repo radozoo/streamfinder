@@ -19,7 +19,6 @@
 
 	const myId = Symbol();
 	let open = $derived(openId === myId);
-	let pinned = $state(false);
 	let closeTimer: ReturnType<typeof setTimeout> | null = null;
 	let triggerEl = $state<HTMLButtonElement | null>(null);
 	// The panel is rendered as a DOM sibling (see below), so "is focus still
@@ -35,12 +34,38 @@
 		panelLeft = rect.left;
 	}
 
+	/**
+	 * Is focus inside this dropdown AND did the keyboard put it there?
+	 *
+	 * Decided here, at closing time, rather than carried in a flag set on focusin. Such
+	 * a flag cannot tell a keyboard user from a mouse one: clicking a pill focuses it
+	 * too, so the panel held itself open on selection and, since focus never follows the
+	 * pointer, nothing ever released it — the panel stayed up until you clicked
+	 * somewhere else entirely. :focus-visible is the browser's own keyboard-vs-pointer
+	 * heuristic, which beats anything guessed from event order here.
+	 */
+	function focusIsKeyboardInside(): boolean {
+		const active = document.activeElement as HTMLElement | null;
+		if (!active) return false;
+		const inside = active === triggerEl || (panelEl?.contains(active) ?? false);
+		if (!inside) return false;
+		try {
+			return active.matches(':focus-visible');
+		} catch {
+			// Engine without :focus-visible. Closing is the lesser evil: a panel that
+			// overstays is the bug being fixed, and Escape still works.
+			return false;
+		}
+	}
+
 	function scheduleClose() {
-		if (pinned) return;
 		closeTimer = setTimeout(() => {
 			// Guard: only close if we are still the active instance.
 			// Without this, a stale timer from A could close a newly-opened B.
-			if (!pinned && openId === myId) openId = null;
+			if (openId !== myId) return;
+			// Never yank the panel away from someone tabbing through it.
+			if (focusIsKeyboardInside()) return;
+			openId = null;
 		}, 150);
 	}
 
@@ -66,7 +91,6 @@
 		const wasOpen = open;
 		if (!wasOpen) updatePanelPosition();
 		openId = wasOpen ? null : myId;
-		if (wasOpen) pinned = false;
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -75,13 +99,21 @@
 			handleClick();
 		} else if (e.key === 'Escape' && open) {
 			openId = null;
-			pinned = false;
 		}
+	}
+
+	// The panel is a DOM sibling, so a keydown inside it never reaches the wrapper that
+	// handles Escape above — pressing it after selecting a pill did nothing at all.
+	function handlePanelKeydown(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		openId = null;
+		// The focused pill is about to leave the document, which would drop the caret to
+		// the top of the page; hand focus back to the trigger it came from.
+		triggerEl?.focus();
 	}
 
 	function handleFocusIn() {
 		cancelClose();
-		pinned = true;
 	}
 
 	function handleFocusOut(e: FocusEvent) {
@@ -93,10 +125,7 @@
 		// dropdown for each additional value.
 		requestAnimationFrame(() => {
 			const active = document.activeElement;
-			if (!wrapper.contains(active) && !panelEl?.contains(active)) {
-				pinned = false;
-				scheduleClose();
-			}
+			if (!wrapper.contains(active) && !panelEl?.contains(active)) scheduleClose();
 		});
 	}
 
@@ -149,6 +178,7 @@
 		onmouseenter={cancelClose}
 		onmouseleave={handleLeave}
 		onfocusin={handleFocusIn}
+		onkeydown={handlePanelKeydown}
 	>
 		{@render children()}
 	</div>
