@@ -49,7 +49,11 @@
 	<key>Nice</key>
 	<integer>10</integer>
 
+	<!-- Fires at every login, which is what makes a Mac that was switched OFF at 08:00
+	     still refresh the day it comes back — launchd's StartCalendarInterval catch-up
+	     only covers waking from SLEEP. Boot at 16:30, refresh at 16:30. The script
+	     itself keeps this to one good run a day; see the refreshed_today gate. -->
 	<key>RunAtLoad</key>
-	<false/>
+	<true/>
 </dict>
 </plist>

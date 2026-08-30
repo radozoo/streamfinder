@@ -18,7 +18,7 @@
 #     `brew services start postgresql@15` would be actively wrong: brew's own data
 #     directory exists and is a DIFFERENT, empty database.
 #
-# Usage:  scripts/refresh.sh [--dry-run] [--no-push] [any `csfd update` flag]
+# Usage:  scripts/refresh.sh [--dry-run] [--no-push] [--force] [any `csfd update` flag]
 
 set -uo pipefail
 
@@ -42,21 +42,51 @@ PGDATA="/Users/radozoo/postgres_data"
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
+# This Mac idle-sleeps after one minute (`pmset -g custom` → sleep 1), and a launchd
+# job with ProcessType Background holds no wake assertion of its own. Without this
+# re-exec the scrape gets only DarkWake bursts — a few seconds of CPU every ~15
+# minutes — so Playwright never finishes a page: `BrowserType.launch` hits its 180s
+# timeout because the machine sleeps mid-launch, the requests fallback returns the
+# Anubis challenge page, and every title is rejected as "Missing mandatory field:
+# title". That is how 2026-08-23 → 2026-08-30 were lost: the 08-25 run took until
+# 08-28, the 08-29 run was still going 25 hours later, and 08-30 never ran at all
+# because launchd will not start a second copy of a label that is still busy.
+# The guard variable keeps the re-exec from recursing.
+CAFFEINATE="/usr/bin/caffeinate"
+if [ -z "${REFRESH_CAFFEINATED:-}" ] && [ -x "$CAFFEINATE" ]; then
+  export REFRESH_CAFFEINATED=1
+  # -i idle sleep, -m disk sleep, -s system sleep on AC. ${1+"$@"} is the portable
+  # guard for an empty argument list under `set -u` in the bash 3.2 macOS ships.
+  exec "$CAFFEINATE" -ims /bin/bash "$0" ${1+"$@"}
+fi
+
 LOG_DIR="$REPO/logs/refresh"
 STAMP="$(date +%Y-%m-%dT%H%M%S)"
 LOG="$LOG_DIR/$STAMP.log"
 STATUS="$LOG_DIR/last-run.json"
 LOCK="$LOG_DIR/.lock"
 
+# Deliberately the same three hours as the stale-lock rule below: a run this script
+# would already disown as crashed must not still be holding the launchd label.
+MAX_RUN_SECONDS="${MAX_RUN_SECONDS:-10800}"
+
+# Set by the watchdog when it notices the machine was suspended mid-run. The gap is
+# overridable so the detection path itself can be exercised without shutting a lid:
+# SLEEP_GAP_SECONDS=1 makes every ordinary tick look like a suspend.
+SLEPT=0
+SLEEP_GAP_SECONDS="${SLEEP_GAP_SECONDS:-60}"
+
 # A refresh takes ~20 minutes; if the Mac wakes twice, two runs must not scrape and
 # commit over each other. mkdir is atomic, unlike test -f && touch.
 DRY_RUN=0
 NO_PUSH=0
+FORCE=0
 PASSTHROUGH=()
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --no-push) NO_PUSH=1 ;;
+    --force)   FORCE=1 ;;
     # Anything else goes to `csfd update`, so the whole path can be exercised with
     # --discover-months 1 --refresh-budget 2 instead of a 20-minute scrape.
     *) PASSTHROUGH+=("$arg") ;;
@@ -96,6 +126,38 @@ fail() {
   exit 1
 }
 
+# A run that cannot finish has to die rather than hang. The 2026-08-29 run sat in
+# `csfd update` for 25 hours; the cost was not that run but the NEXT one — at 08:00
+# launchd found the label still busy and skipped the day in silence. macOS ships no
+# coreutils `timeout`, hence the hand-rolled watchdog.
+run_with_deadline() {
+  "$@" &
+  local pid=$!
+  local started now last delta
+  started="$(date +%s)"; last="$started"
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 10
+    now="$(date +%s)"
+    delta=$((now - last)); last="$now"
+    # A `sleep 10` that came back minutes later means the Mac was suspended under us.
+    # That is the difference between "the run is slow" and "the run was not running",
+    # and it decides whether this is a fault or just a day the laptop was shut.
+    [ "$delta" -gt "$SLEEP_GAP_SECONDS" ] && SLEPT=1
+    if [ $((now - started)) -ge "$MAX_RUN_SECONDS" ]; then
+      log "update exceeded ${MAX_RUN_SECONDS}s of wall clock, killing pid $pid"
+      kill -TERM "$pid" 2>/dev/null
+      sleep 10
+      kill -KILL "$pid" 2>/dev/null
+      # Playwright's browser is a grandchild and outlives a killed python, still
+      # holding its temp profile. The profile name is unique to Playwright's own
+      # chromium launcher, so this cannot hit a browser the user is looking at.
+      /usr/bin/pkill -f 'playwright_chromiumdev_profile' 2>/dev/null
+      return 124
+    fi
+  done
+  wait "$pid"
+}
+
 if ! mkdir "$LOCK" 2>/dev/null; then
   # A lock older than three hours is a crashed run, not a running one.
   if [ -n "$(/usr/bin/find "$LOCK" -maxdepth 0 -mmin +180 2>/dev/null)" ]; then
@@ -120,6 +182,39 @@ on_exit() {
   fi
 }
 trap on_exit EXIT
+
+# The plist fires this at 08:00 AND at every login (RunAtLoad). The second trigger is
+# the whole point: launchd's own catch-up covers a Mac that SLEPT through 08:00, but
+# not one that was switched off — that job would otherwise wait for tomorrow. Booting
+# at 16:30 should refresh at 16:30.
+#
+# Two triggers mean this has to decide for itself whether today is already done, so
+# the rule is "at most one good run a day": a today-dated ok/no-change is enough to
+# stop here. A failed or skipped run is deliberately NOT enough — those should be
+# retried at the next opportunity, which is exactly what the next login is.
+# Overridable purely so the early-morning branch is testable at any hour of the day.
+SCHEDULED_HOUR="${SCHEDULED_HOUR:-8}"
+refreshed_today() {
+  [ -f "$STATUS" ] || return 1
+  local outcome started
+  outcome="$(/usr/bin/sed -n 's/.*"outcome": "\([^"]*\)".*/\1/p' "$STATUS")"
+  started="$(/usr/bin/sed -n 's/.*"started_at": "\([^"]*\)".*/\1/p' "$STATUS")"
+  case "$outcome" in ok|no-change) ;; *) return 1 ;; esac
+  [ "${started%%T*}" = "$(date +%Y-%m-%d)" ]
+}
+if [ "$FORCE" = "0" ]; then
+  if refreshed_today; then
+    log "today is already refreshed, nothing to do"
+    exit 0
+  fi
+  # A login before 08:00 is not a missed day, it is an early morning. Running now
+  # would only publish staler data and then make the 08:00 trigger a no-op.
+  # 10# because `date +%H` yields 08 and the shell would read that as octal.
+  if [ "$((10#$(date +%H)))" -lt "$SCHEDULED_HOUR" ]; then
+    log "before ${SCHEDULED_HOUR}:00 and today has not run yet — leaving it to the 08:00 trigger"
+    exit 0
+  fi
+fi
 
 cd "$REPO" || fail startup "cannot enter $REPO"
 log "refresh starting (dry_run=$DRY_RUN no_push=$NO_PUSH)"
@@ -147,8 +242,28 @@ UPDATE_ARGS=("${PASSTHROUGH[@]+"${PASSTHROUGH[@]}"}")
 [ "$DRY_RUN" = "1" ] && UPDATE_ARGS+=(--dry-run)
 log "running csfd update"
 # bash 3.2 (what macOS ships) treats an empty array as unbound under `set -u`, so the
-# no-flags case — i.e. every real launchd run — needs the same guard as line 119.
-"$PYTHON" -m csfd_vod.main update "${UPDATE_ARGS[@]+"${UPDATE_ARGS[@]}"}" || fail update "csfd update returned non-zero"
+# no-flags case — i.e. every real launchd run — needs the same guard as PASSTHROUGH above.
+run_with_deadline "$PYTHON" -m csfd_vod.main update "${UPDATE_ARGS[@]+"${UPDATE_ARGS[@]}"}"
+UPDATE_RC=$?
+
+# A laptop that spent the day shut is not a broken pipeline. Missing one day costs
+# nothing — launchd fires again tomorrow, and `update` is incremental, so the next
+# run picks up everything this one would have caught. So a run the Mac slept through
+# exits clean and quiet; only a run that stalled while genuinely awake is a fault
+# worth waking a human for.
+if [ "$UPDATE_RC" = "124" ]; then
+  if [ "$SLEPT" = "1" ]; then
+    log "the Mac slept through this run — skipping today, launchd retries tomorrow"
+    write_status skipped update "machine slept during the run, nothing published"
+    exit 0
+  fi
+  fail update "csfd update still running after ${MAX_RUN_SECONDS}s while awake, killed"
+fi
+[ "$UPDATE_RC" = "0" ] || fail update "csfd update returned $UPDATE_RC"
+
+# It finished, but in fits and starts — say so, because the yield will look thin and
+# the reason belongs in the log rather than in a future debugging session.
+[ "$SLEPT" = "1" ] && log "note: the Mac slept at least once during this run"
 
 if [ "$DRY_RUN" = "1" ]; then
   log "dry run, stopping before the gates"
