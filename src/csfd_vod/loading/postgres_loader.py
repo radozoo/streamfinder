@@ -241,6 +241,19 @@ class PostgresLoader:
         "dim_cinematographers", "dim_composers",
     )
 
+    # Dimensions cleared ONLY when this parse actually carries a value, mirroring the
+    # COALESCE that already protects the fact row's volatile fields.
+    #
+    # Everything else in _REBUILT_DIMS is read off the title page, where an absent
+    # section genuinely means "not listed any more". Platforms are the exception: a
+    # serial episode's page carries no .film-vod-list at all, so its only source is
+    # the /vod listing — and when a listing page comes back as a bot challenge it
+    # parses to zero entries. Clearing on that erases a correct platform, and nothing
+    # restores it, because the next incremental parse skips a title whose own page
+    # never moved. Myšilov lost its Netflix badge exactly this way while keeping the
+    # distributor COALESCE had saved. An empty parse may add nothing; it may not erase.
+    _REBUILT_ONLY_IF_PRESENT = {"dim_vods": lambda t: bool(t.vod_platforms)}
+
     def _upsert_dimensions(self, session: Session, title_id: int, title: VODTitle):
         """Rebuild a title's page-derived dimension rows from the current parse.
 
@@ -253,6 +266,9 @@ class PostgresLoader:
         """
         try:
             for tbl in self._REBUILT_DIMS:
+                carries = self._REBUILT_ONLY_IF_PRESENT.get(tbl)
+                if carries is not None and not carries(title):
+                    continue
                 session.execute(
                     text(f"DELETE FROM csfd_vod.{tbl} WHERE title_id = :title_id"),
                     {"title_id": title_id},

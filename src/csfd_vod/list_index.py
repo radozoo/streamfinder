@@ -45,6 +45,19 @@ logger = get_logger(__name__)
 
 INDEX_FILENAME = "list_index.json"
 
+# Markers of the bot-protection interstitial ČSFD serves instead of a listing. It is
+# perfectly readable HTML that parses to zero entries, so neither the read guard nor
+# the parse guard below catches it — it lands in the index as "this page lists
+# nothing", and every title it really carried loses its date, distributor and
+# platform. Belt to the scraper's braces: the fetch should never have cached it, but
+# an index that trusts one is how a single bad fetch outlives the fetch.
+_CHALLENGE_MARKERS = ("not a bot", "within.website")
+
+
+def _is_challenge_page(html: str) -> bool:
+    head = html[:4096].lower()
+    return any(m in head for m in _CHALLENGE_MARKERS)
+
 # What decides the entries a listing page parses into. Deliberately narrower than
 # parse_state's fingerprint: a change to the title parser must not throw away 135
 # seconds of listing work it cannot possibly have affected.
@@ -158,6 +171,12 @@ class ListIndex:
                     # Not stored, so the next run tries again rather than inheriting
                     # this page's absence as a fact.
                     logger.warning("list_page_read_failed", path=str(path), error=str(e))
+                    unreadable += 1
+                    continue
+                if _is_challenge_page(html):
+                    # Left out of the index, exactly like an unreadable page, so the
+                    # next run retries instead of inheriting an empty listing as fact.
+                    logger.warning("list_page_challenge_skipped", path=str(path), bytes=len(html))
                     unreadable += 1
                     continue
                 try:

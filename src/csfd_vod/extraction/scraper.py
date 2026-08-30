@@ -355,11 +355,39 @@ class VODScraper:
                 # Force a fresh fetch for months in the refetch window, so discover
                 # sees releases that appeared since the page was last cached.
                 stale = refetch_from is not None and (year, month) >= refetch_from
-                if page_path is not None and page_path.exists() and not stale:
+                # Same stub guard the platform harvest above has had all along. It
+                # was never wired into this path, and that asymmetry is what lost
+                # 2026-08-30 two of its five titles: a 7,478-byte challenge page was
+                # written here as if it were the month's listing, parsed to zero
+                # entries, and the zero was cached in list_index as fact. A listing
+                # page is the ONLY source of vod_date/distributor/platform for a
+                # running serial's episode, so an empty one does not merely fail to
+                # add — it erases what a good fetch had already established.
+                cached_ok = (
+                    page_path is not None and page_path.exists() and not stale
+                    and page_path.stat().st_size >= self._MIN_LISTING_PAGE_BYTES
+                )
+                if cached_ok:
                     html = page_path.read_text(encoding="utf-8")
                     urls = self._extract_title_urls(html)
                 else:
-                    urls, html = self.scrape_vod_month_page(year, month, page)
+                    if page_path is not None and page_path.exists() and not stale:
+                        logger.warning("list_page_cache_poisoned_refetching", path=str(page_path))
+                    for attempt in range(3):
+                        urls, html = self.scrape_vod_month_page(year, month, page)
+                        if len(html) >= self._MIN_LISTING_PAGE_BYTES:
+                            break
+                        logger.warning(
+                            "list_page_too_small_retry",
+                            year=year, month=month, page=page,
+                            attempt=attempt + 1, bytes=len(html),
+                        )
+                    else:
+                        # Never cache the stub, and never let it read as "end of
+                        # month" — that is how a truncated harvest looks healthy.
+                        reason = "fetch_failed"
+                        logger.error("list_page_fetch_failed", year=year, month=month, page=page)
+                        break
                     if page_path is not None:
                         page_path.write_text(html, encoding="utf-8")
                         logger.info("list_page_cached", path=str(page_path))
@@ -397,7 +425,9 @@ class VODScraper:
             #    FAILED FETCH — the month is truncated (the class of bug that lost
             #    Twin Peaks). ✗
             #  - "cap": runaway pagination. ✗
-            suspect = reason == "cap" or (reason == "empty" and last_nonempty >= 1)
+            #  - "fetch_failed": a challenge stub survived three attempts, so the
+            #    month stops short of its real end through no fault of the listing. ✗
+            suspect = reason in ("cap", "fetch_failed") or (reason == "empty" and last_nonempty >= 1)
             if suspect:
                 logger.error(
                     "harvest_month_incomplete",

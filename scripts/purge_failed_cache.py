@@ -35,6 +35,27 @@ from pathlib import Path
 
 MARKER = b"film-header"
 
+# The same interstitial, in the OTHER cache. A poisoned listing page is worse than a
+# poisoned title page: the title page merely fails to parse, but a listing that reads
+# as "zero entries" strips vod_date, distributor and platform from every title it
+# carried — and for a serial episode the listing is the only source of those.
+#
+# Matched on the challenge markers rather than on size, deliberately. A month's last
+# page is legitimately tiny (39 bytes, no articles) and is how the harvest recognises
+# the end of a month; deleting those would have it refetch the same emptiness forever.
+CHALLENGE_MARKERS = (b"not a bot", b"within.website")
+
+
+def _challenge_pages(list_dir: Path) -> list[Path]:
+    if not list_dir.is_dir():
+        return []
+    out = []
+    for p in sorted(list_dir.glob("*.html")):
+        head = p.read_bytes()[:4096].lower()
+        if any(m in head for m in CHALLENGE_MARKERS):
+            out.append(p)
+    return out
+
 # A real title page is 150 KB+; every silent failure measured was under 10 KB, with
 # nothing between. Reading only the small ones keeps the gate to a few hundred files
 # instead of ~7 GB, and the margin is wide enough that the shape would have to change
@@ -117,6 +138,7 @@ def main() -> int:
     suspect = [p for p in files if p.stat().st_size <= SUSPECT_MAX_BYTES]
     bad = [p for p in suspect if MARKER not in p.read_bytes()]
     missing = _missing_from_index(args.cache_dir.parent)
+    bad_lists = _challenge_pages(args.cache_dir.parent / "vod_lists")
 
     print(f"cached pages    : {len(files):,}")
     print(f"not a title page: {len(bad):,}")
@@ -125,8 +147,11 @@ def main() -> int:
         print(f"  size range    : {sizes[0]:,} B – {sizes[-1]:,} B")
         print(f"  e.g. {', '.join(p.name for p in bad[:5])}")
     print(f"indexed but gone: {len(missing):,}")
+    print(f"challenge lists : {len(bad_lists):,}")
+    if bad_lists:
+        print(f"  e.g. {', '.join(p.name for p in bad_lists[:5])}")
 
-    if not bad and not missing:
+    if not bad and not missing and not bad_lists:
         print("\nOK: every indexed URL has a page, and every page is a title page")
         return 0
 
@@ -140,11 +165,19 @@ def main() -> int:
             print(f"\nFAIL: {len(missing):,} indexed URLs have no cached page —"
                   " they will never reach the catalog."
                   "\n      Re-download with --refetch.")
+        if bad_lists:
+            print(f"\nFAIL: {len(bad_lists):,} listing pages are bot-protection"
+                  " challenges. Each one blanks the date, distributor and platform"
+                  "\n      of every title it should have carried."
+                  "\n      Purge with --apply; the next harvest refetches them.")
         return 1
 
     for p in bad:
         p.unlink()
-    print(f"\ndeleted {len(bad):,} — run `python3 -m csfd_vod.main scrape` to refetch")
+    for p in bad_lists:
+        p.unlink()
+    print(f"\ndeleted {len(bad):,} title page(s) and {len(bad_lists):,} listing page(s)"
+          " — run `python3 -m csfd_vod.main scrape` to refetch")
     return 0
 
 
