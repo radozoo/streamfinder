@@ -66,9 +66,39 @@ LOG="$LOG_DIR/$STAMP.log"
 STATUS="$LOG_DIR/last-run.json"
 LOCK="$LOG_DIR/.lock"
 
-# Deliberately the same three hours as the stale-lock rule below: a run this script
-# would already disown as crashed must not still be holding the launchd label.
-MAX_RUN_SECONDS="${MAX_RUN_SECONDS:-10800}"
+# Two different budgets, because "the run is stuck" and "the laptop was shut" are
+# two different things and only one of them is a fault.
+#
+# Closing the lid mid-run is ordinary and always was: the process survives, and
+# resumes when the Mac is opened again. That is how the 2026-08-25 run eventually
+# finished, and for months it is how a normal day worked. A wall-clock deadline
+# punishes exactly that case — 2026-08-31 was opened at 08:13, shut around 08:30
+# and would have finished on reopening, but the clock had run out by then and the
+# day was thrown away. So the budget counts only the time the machine was actually
+# awake and the run actually running.
+#
+# The hour the plist triggers at. Overridable purely so the early-morning branch and
+# the wall cutoff below are testable at any hour of the day.
+SCHEDULED_HOUR="${SCHEDULED_HOUR:-8}"
+
+# An hour of awake time is generous: a healthy refresh is ~30 minutes of real work
+# (767 titles in 45 minutes on 2026-08-31). Reaching an hour without finishing means
+# the run is not making progress, which is a fault worth a notification.
+MAX_AWAKE_SECONDS="${MAX_AWAKE_SECONDS:-3600}"
+
+# The wall-clock stop exists for one reason only: a run must not still be holding
+# the lock when the next scheduled trigger arrives, or the following day gets
+# skipped in silence — the 25-hour run that cost 2026-08-30 its refresh. So it is
+# not a duration but a point in time, half an hour before the next trigger. A run
+# may legitimately span a whole working day; it may not span two.
+wall_cutoff() {
+  local h="$1"
+  if [ "$((10#$(date +%H)))" -lt "$h" ]; then
+    date -v"${h}"H -v0M -v0S -v-30M +%s
+  else
+    date -v+1d -v"${h}"H -v0M -v0S -v-30M +%s
+  fi
+}
 
 # Set by the watchdog when it notices the machine was suspended mid-run. The gap is
 # overridable so the detection path itself can be exercised without shutting a lid:
@@ -131,43 +161,72 @@ fail() {
 # launchd found the label still busy and skipped the day in silence. macOS ships no
 # coreutils `timeout`, hence the hand-rolled watchdog.
 run_with_deadline() {
+  # Monitor mode so the child starts its own process group, which is what lets the
+  # kill path take Playwright's browser down with it. Without it a killed run leaks a
+  # chrome-headless-shell still holding its temp profile — pkill by pattern raced the
+  # browser's own launch and lost, observed while testing this on 2026-08-31.
+  set -m
   "$@" &
   local pid=$!
-  local started now last delta
+  set +m
+  local started now last delta awake=0 cutoff
   started="$(date +%s)"; last="$started"
+  cutoff="$(wall_cutoff "$SCHEDULED_HOUR")"
+  log "budget: ${MAX_AWAKE_SECONDS}s awake, hard stop at $(date -r "$cutoff" +%H:%M)"
   while kill -0 "$pid" 2>/dev/null; do
     sleep 10
     now="$(date +%s)"
     delta=$((now - last)); last="$now"
-    # A `sleep 10` that came back minutes later means the Mac was suspended under us.
-    # That is the difference between "the run is slow" and "the run was not running",
-    # and it decides whether this is a fault or just a day the laptop was shut.
-    [ "$delta" -gt "$SLEEP_GAP_SECONDS" ] && SLEPT=1
-    if [ $((now - started)) -ge "$MAX_RUN_SECONDS" ]; then
-      log "update exceeded ${MAX_RUN_SECONDS}s of wall clock, killing pid $pid"
-      kill -TERM "$pid" 2>/dev/null
-      sleep 10
-      kill -KILL "$pid" 2>/dev/null
-      # Playwright's browser is a grandchild and outlives a killed python, still
-      # holding its temp profile. The profile name is unique to Playwright's own
-      # chromium launcher, so this cannot hit a browser the user is looking at.
-      /usr/bin/pkill -f 'playwright_chromiumdev_profile' 2>/dev/null
+    # A `sleep 10` that came back minutes later means the machine was suspended, so
+    # that stretch was never ours to spend. Anything close to ten seconds was.
+    if [ "$delta" -gt "$SLEEP_GAP_SECONDS" ]; then
+      SLEPT=1
+    else
+      awake=$((awake + delta))
+    fi
+    # Keep the lock's mtime moving so a concurrent trigger can tell a long run from
+    # an abandoned one without guessing at durations.
+    /usr/bin/touch "$LOCK" 2>/dev/null
+    if [ "$awake" -ge "$MAX_AWAKE_SECONDS" ]; then
+      log "update used ${awake}s of awake time without finishing, killing pid $pid"
+      _kill_tree "$pid"
+      return 125
+    fi
+    if [ "$now" -ge "$cutoff" ]; then
+      log "reached the hard stop with ${awake}s awake, killing pid $pid"
+      _kill_tree "$pid"
       return 124
     fi
   done
   wait "$pid"
 }
 
+_kill_tree() {
+  # A negative pid is the whole process group — python, Playwright's node shim and
+  # the browser it spawned — rather than just the process we happen to hold.
+  kill -TERM -- "-$1" 2>/dev/null || kill -TERM "$1" 2>/dev/null
+  sleep 10
+  kill -KILL -- "-$1" 2>/dev/null || kill -KILL "$1" 2>/dev/null
+  # Last net, for a browser that already escaped its group. The profile name is
+  # unique to Playwright's own chromium launcher, so this cannot hit a browser the
+  # user is looking at.
+  /usr/bin/pkill -f 'playwright_chromiumdev_profile' 2>/dev/null
+}
+
 if ! mkdir "$LOCK" 2>/dev/null; then
-  # A lock older than three hours is a crashed run, not a running one.
-  if [ -n "$(/usr/bin/find "$LOCK" -maxdepth 0 -mmin +180 2>/dev/null)" ]; then
-    log "stale lock from a crashed run, taking over"
-    /bin/rm -rf "$LOCK" && mkdir "$LOCK"
-  else
-    log "another refresh is still running, skipping this one"
+  # Liveness by pid rather than by the lock's age. Age was a fair proxy while a run
+  # could not outlive three hours, but a run is now allowed to span a working day
+  # while the lid is shut — and an age rule would hand its lock to a second copy
+  # while the first was still scraping.
+  OTHER="$(/bin/cat "$LOCK/pid" 2>/dev/null || true)"
+  if [ -n "$OTHER" ] && kill -0 "$OTHER" 2>/dev/null; then
+    log "refresh $OTHER is still running, skipping this one"
     exit 0
   fi
+  log "lock held by a process that is gone (${OTHER:-no pid recorded}), taking over"
+  /bin/rm -rf "$LOCK" && mkdir "$LOCK"
 fi
+echo $$ >"$LOCK/pid"
 # A bash fatal (unbound variable, syntax error) kills the script mid-line, past every
 # fail() call — the run then dies leaving last-run.json describing the PREVIOUS run and
 # no notification at all. That silent death is the one failure mode this script exists
@@ -192,8 +251,6 @@ trap on_exit EXIT
 # the rule is "at most one good run a day": a today-dated ok/no-change is enough to
 # stop here. A failed or skipped run is deliberately NOT enough — those should be
 # retried at the next opportunity, which is exactly what the next login is.
-# Overridable purely so the early-morning branch is testable at any hour of the day.
-SCHEDULED_HOUR="${SCHEDULED_HOUR:-8}"
 refreshed_today() {
   [ -f "$STATUS" ] || return 1
   local outcome started
@@ -251,13 +308,17 @@ UPDATE_RC=$?
 # run picks up everything this one would have caught. So a run the Mac slept through
 # exits clean and quiet; only a run that stalled while genuinely awake is a fault
 # worth waking a human for.
+# 125 = an hour of awake time and still not done. The machine was there and the run
+# got nowhere, so something is actually wrong and a human should hear about it.
+[ "$UPDATE_RC" = "125" ] && fail update "csfd update ran ${MAX_AWAKE_SECONDS}s awake without finishing, killed"
+
+# 124 = the day ran out before enough of it was spent awake. Nothing is broken; the
+# laptop was simply shut for most of it. Quiet, and tomorrow starts clean — `update`
+# is incremental, so the next run picks up whatever this one would have caught.
 if [ "$UPDATE_RC" = "124" ]; then
-  if [ "$SLEPT" = "1" ]; then
-    log "the Mac slept through this run — skipping today, launchd retries tomorrow"
-    write_status skipped update "machine slept during the run, nothing published"
-    exit 0
-  fi
-  fail update "csfd update still running after ${MAX_RUN_SECONDS}s while awake, killed"
+  log "the day ran out before this run could finish — skipping, the next trigger retries"
+  write_status skipped update "machine was asleep for most of the run, nothing published"
+  exit 0
 fi
 [ "$UPDATE_RC" = "0" ] || fail update "csfd update returned $UPDATE_RC"
 
