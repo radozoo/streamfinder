@@ -7,6 +7,8 @@ import argparse
 from pathlib import Path
 from typing import Optional
 
+from sqlalchemy import text
+
 from csfd_vod.config import load_config_from_env, load_selectors
 from csfd_vod.logger import setup_logging, get_logger
 from csfd_vod.extraction.scraper import VODScraper
@@ -494,6 +496,80 @@ def _months_back(n: int) -> tuple:
     return idx // 12, idx % 12 + 1
 
 
+_ORPHAN_ROOTS = text("""
+    SELECT t.root_id, MIN(t.url_id) AS child_url
+    FROM csfd_vod.fact_titles t
+    WHERE t.root_id IS NOT NULL
+      AND t.root_id <> t.csfd_id
+      AND NOT EXISTS (
+          SELECT 1 FROM csfd_vod.fact_titles r WHERE r.csfd_id = t.root_id
+      )
+    GROUP BY t.root_id
+""")
+
+# A child's own URL spells its root out in full, id and slug both, so the root page
+# needs neither guessing nor a re-harvest:
+#   /film/1883585-v-jednom-ohni/1886250-episode-1/prehled/
+#          └──────── root ────┘
+_CHILD_URL_RE = re.compile(r"^(https://www\.csfd\.cz/film/\d+[^/]*/)\d+[^/]*/prehled/$")
+
+
+
+def _adopt_orphan_roots(loader, scraper, cache, run_id: str) -> dict:
+    """Scrape the serials that only ever appear as somebody's parent.
+
+    The monthly /vod feed lists a dated ARRIVAL, and a serial has none of its own —
+    only its episodes do. So a new serial's episodes reach the catalog while its own
+    overview page is never harvested, never scraped and never becomes a row.
+
+    That is visible on the site rather than merely untidy. Episodes carry no poster
+    of their own — none of them ever do, they inherit the serial's — and no name, so
+    the card falls back to the bare "Episode 1". With no serial row there is nothing
+    to inherit, and both go blank at once. Found on 2026-08-31: 15 episodes under 6
+    missing serials, every one added inside the same week, because this arrives with
+    each new serial and never heals by itself.
+
+    `scripts/backfill_missing_works.py` fixes the same thing by re-scanning the
+    cached listing HTML, which nobody remembers to run. Doing it from the child rows
+    already in the DB is both cheaper and self-maintaining.
+    """
+    session = loader.SessionLocal()
+    try:
+        rows = [(r[0], r[1]) for r in session.execute(_ORPHAN_ROOTS)]
+    finally:
+        session.close()
+
+    wanted: dict[int, str] = {}
+    for root_id, child_url in rows:
+        m = _CHILD_URL_RE.match(child_url or "")
+        if m:
+            wanted[root_id] = m.group(1) + "prehled/"
+        else:
+            # Not fatal, but it means a shape we have not seen; say so rather than
+            # dropping the root silently.
+            logger.warning("orphan_root_url_unparsed", root_id=root_id, child_url=child_url)
+
+    adopted, failed = [], []
+    for root_id, url in sorted(wanted.items()):
+        if cache.has(url):
+            # Already downloaded — the next parse will pick it up on its own.
+            continue
+        # The scraper retries and refuses anything that is not a title page, so a
+        # None here means three real attempts failed. Not cached, deliberately: a
+        # stored challenge page reads as done forever, while an absent one is retried.
+        html = scraper.scrape_title_details(url)
+        if html:
+            cache.save(url, html)
+            adopted.append(url)
+        else:
+            failed.append(url)
+            logger.warning("orphan_root_scrape_failed", root_id=root_id, url=url)
+
+    out = {"orphans": len(wanted), "adopted": len(adopted), "failed": len(failed)}
+    logger.info("cmd_update_adopt_roots_complete", run_id=run_id, **out)
+    return out
+
+
 def cmd_update(args) -> dict:
     """Incremental catalog refresh — the manually-run 'keep it fresh' command.
 
@@ -607,6 +683,25 @@ def cmd_update(args) -> dict:
     finally:
         dloader.close()
     logger.info("cmd_update_dedupe_complete", run_id=run_id, **summary["steps"]["dedupe"])
+
+    # ── 3c. adopt orphan roots ────────────────────────────────────────────────
+    # After dedupe, so slug drift is already collapsed and a root is not chased for a
+    # child row that is about to be deleted. Before export, so a serial adopted here
+    # is a row by the time the exporter builds the index and the episode has a name
+    # and a poster to inherit.
+    aloader = PostgresLoader(config.database.connection_string)
+    try:
+        summary["steps"]["adopt_roots"] = _adopt_orphan_roots(aloader, scraper, cache, run_id)
+    finally:
+        aloader.close()
+    if summary["steps"]["adopt_roots"]["adopted"]:
+        # Parse again rather than loading inline: the plan is mtime-driven, so it
+        # picks up exactly the pages just written and nothing else.
+        reparse = cmd_parse(argparse.Namespace(dry_run=False, full=False))
+        summary["steps"]["parse_adopted"] = reparse
+        if not reparse.get("success"):
+            summary["success"] = False
+            return summary
 
     # ── 4. enrich (missing only) ──────────────────────────────────────────────
     if not args.skip_enrich:

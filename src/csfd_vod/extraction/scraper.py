@@ -652,6 +652,16 @@ class VODScraper:
             logger.error("scrape_vod_list_failed", error=str(e), url=vod_page_url, method="requests")
             return [], ""
 
+    # A real ČSFD title page carries the header element and is 150 KB+; the
+    # bot-protection interstitial has neither. scripts/purge_failed_cache.py draws
+    # the same line on the same marker, which is how the poisoned pages get found
+    # after the fact — this is the same test applied before they are stored.
+    _TITLE_PAGE_MARKER = "film-header"
+
+    @classmethod
+    def _is_title_page(cls, html: Optional[str]) -> bool:
+        return bool(html) and cls._TITLE_PAGE_MARKER in html
+
     def scrape_title_details(self, title_url: str) -> Optional[str]:
         """
         Scrape HTML content for a single title page.
@@ -670,7 +680,10 @@ class VODScraper:
                     try:
                         self.rate_limiter.wait()
                         html_content = self._scrape_title_details_playwright(title_url)
-                        if html_content:
+                        # The Playwright path waits on `.film-header h1`, so it is
+                        # already all but guaranteed; checked anyway so the guarantee
+                        # lives in one place rather than in a selector two files away.
+                        if self._is_title_page(html_content):
                             logger.info("scrape_title_details_success", url=title_url, method="playwright")
                             return html_content
                     except Exception as e:
@@ -684,6 +697,22 @@ class VODScraper:
                     timeout=10,
                 )
                 response.raise_for_status()
+                # 200 OK is not the same as "a title page". ČSFD answers plain HTTP
+                # with its bot-protection interstitial — a valid, ~7 KB document that
+                # every caller here then CACHES, and HTMLCache.has() only asks whether
+                # a file exists, so the URL is never retried. Four titles were poisoned
+                # this way on 2026-08-31 alone, one of them by purge_failed_cache
+                # --refetch, the tool whose job is removing exactly this. Refusing the
+                # page is strictly better than caching it: absent means retried.
+                if not self._is_title_page(response.text):
+                    logger.warning(
+                        "title_page_not_a_title_page",
+                        url=title_url, method="requests",
+                        attempt=attempt + 1, bytes=len(response.text),
+                    )
+                    if attempt >= 2:
+                        return None
+                    continue
                 logger.info("scrape_title_details_success", url=title_url, method="requests")
                 return response.text
 
