@@ -58,9 +58,19 @@ class PostgresLoader:
                 with open("db/schema.sql", "r") as f:
                     schema_sql = f.read()
 
-                # Execute each statement separately
+                # Execute each statement separately.
+                #
+                # Splitting on ";" also splits a comment that contains one, leaving a
+                # comment-only fragment — psycopg2 rejects that as "can't execute an
+                # empty query" and takes the whole load down with it. Stripping the
+                # comment lines before the emptiness check keeps a semicolon in prose
+                # from being a landmine.
                 for statement in schema_sql.split(";"):
-                    if statement.strip():
+                    body = "\n".join(
+                        line for line in statement.splitlines()
+                        if not line.strip().startswith("--")
+                    )
+                    if body.strip():
                         conn.execute(text(statement))
                 conn.commit()
 
@@ -147,14 +157,14 @@ class PostgresLoader:
             insert_sql = text("""
                 INSERT INTO csfd_vod.fact_titles
                     (url_id, title, year, link, date_added, run_id, updated_at,
-                     title_en, plot, rating, image_url, title_type, parent_url,
+                     title_en, alt_titles, plot, rating, image_url, title_type, parent_url,
                      vod_date, distributor, premiere_detail, scraped_at,
                      runtime_min, votes_count, trailer_url, age_rating,
                      csfd_id, root_id, season_no, episode_no,
                      season_total, episode_total)
                 VALUES
                     (:url_id, :title, :year, :link, :date_added, :run_id, CURRENT_TIMESTAMP,
-                     :title_en, :plot, :rating, :image_url, :title_type, :parent_url,
+                     :title_en, :alt_titles, :plot, :rating, :image_url, :title_type, :parent_url,
                      :vod_date, :distributor, :premiere_detail, :scraped_at,
                      :runtime_min, :votes_count, :trailer_url, :age_rating,
                      :csfd_id, :root_id, :season_no, :episode_no,
@@ -171,6 +181,7 @@ class PostgresLoader:
                     -- parse has nothing — so a bad page can only ever ADD, never erase.
                     -- (A fully-blocked page has no title and never reaches here.)
                     title_en = COALESCE(EXCLUDED.title_en, csfd_vod.fact_titles.title_en),
+                    alt_titles = COALESCE(EXCLUDED.alt_titles, csfd_vod.fact_titles.alt_titles),
                     plot = COALESCE(EXCLUDED.plot, csfd_vod.fact_titles.plot),
                     rating = COALESCE(EXCLUDED.rating, csfd_vod.fact_titles.rating),
                     image_url = COALESCE(EXCLUDED.image_url, csfd_vod.fact_titles.image_url),
@@ -205,6 +216,10 @@ class PostgresLoader:
                     "date_added": title.date_added,
                     "run_id": run_id,
                     "title_en": title.title_en,
+                    # NULL, not '{}', when the parse found no names — the COALESCE above
+                    # must see "nothing new" and keep what is there, and an empty array
+                    # is a value that would overwrite a good list.
+                    "alt_titles": title.alt_titles or None,
                     "plot": title.plot,
                     "rating": title.rating,
                     "image_url": title.image_url,

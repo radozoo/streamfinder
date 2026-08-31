@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { TitleIndex } from '$lib/types';
 	import { base } from '$app/paths';
-	import { fold } from '$lib/search';
+	import { fold, getSearchIndex, matchedName, matchesQuery, rankHit } from '$lib/search';
 
 	interface Props {
 		titles: TitleIndex[];
@@ -11,16 +11,31 @@
 	let { titles, onclose }: Props = $props();
 
 	let query = $state('');
-	let inputEl: HTMLInputElement;
+
+	// The field must take keystrokes the moment the overlay opens. The `autofocus`
+	// attribute does not deliver that: browsers honour it when a document loads, not
+	// when an element is inserted into a live one, so focus stayed on the lupa button
+	// that opened this and the first thing typed went nowhere. Focusing explicitly
+	// once the node exists is the only reliable way.
+	let inputEl = $state<HTMLInputElement | null>(null);
+	$effect(() => {
+		inputEl?.focus();
+	});
 
 	const MAX_RESULTS = 8;
 
 	let results = $derived.by(() => {
 		const q = fold(query.trim());
 		if (!q) return [];
-		return titles
-			.filter((t) => fold(t.title).includes(q) || fold(t.title_en ?? '').includes(q))
-			.slice(0, MAX_RESULTS);
+		// Built on the first keystroke, then reused — see getSearchIndex.
+		const index = getSearchIndex(titles);
+		const hits = titles.filter((t) => matchesQuery(index, t, q));
+		// With only 8 slots, index order (newest release first) answered "squid game"
+		// with two making-of documentaries and pushed the series itself to fourth.
+		hits.sort(
+			(a, b) => rankHit(a, q) - rankHit(b, q) || (b.votes_count ?? 0) - (a.votes_count ?? 0)
+		);
+		return hits.slice(0, MAX_RESULTS).map((t) => ({ t, matched: matchedName(t, q) }));
 	});
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -56,7 +71,6 @@
 				class="search-field"
 				type="search"
 				placeholder="Hledat film, seriál…"
-				autofocus
 				autocomplete="off"
 			/>
 			<button class="close-btn" onclick={onclose} aria-label="Zavřít">✕</button>
@@ -64,7 +78,7 @@
 
 		{#if results.length > 0}
 			<ul class="results-list">
-				{#each results as t (t.id)}
+				{#each results as { t, matched } (t.id)}
 					<li>
 						<a class="result-item" href="{base}/titul/{t.id}/{t.slug}" onclick={onclose}>
 							{#if t.poster}
@@ -74,6 +88,9 @@
 							{/if}
 							<div class="result-info">
 								<span class="result-title">{t.title}</span>
+								{#if matched}
+									<span class="result-alt">{matched}</span>
+								{/if}
 								<span class="result-meta">
 									{#if t.year}{t.year}{/if}
 									{#if t.rating !== null}
@@ -200,6 +217,14 @@
 		font-size: 0.95rem;
 		font-weight: 600;
 		color: var(--text-primary);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.result-alt {
+		font-size: 0.8rem;
+		color: var(--text-secondary, var(--text-muted));
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;

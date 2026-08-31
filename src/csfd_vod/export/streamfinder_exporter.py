@@ -18,6 +18,7 @@ Produces these outputs for the SvelteKit static site:
 import json
 import re
 import shutil
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,30 @@ def _slug(title: str, year: int | None) -> str:
     if year is not None:
         slug = f"{slug}-{year}"
     return slug
+
+
+def _fold(value: str) -> str:
+    """Same folding the frontend search uses: strip diacritics, lowercase."""
+    return "".join(
+        c for c in unicodedata.normalize("NFD", value) if not unicodedata.combining(c)
+    ).lower()
+
+
+def _search_names(t: dict) -> list[str]:
+    """The title's other release names, minus what search already matches.
+
+    `title` and `title_en` are matched on their own, and ČSFD repeats the origin name
+    across every country it was released in, so only names that add a new string are
+    shipped — ~0.6 per title, which keeps this off the 33 MB index's critical path.
+    """
+    known = {_fold(t["title"] or ""), _fold(t["title_en"] or "")}
+    out = []
+    for name in t.get("alt_titles") or []:
+        folded = _fold(name)
+        if folded and folded not in known:
+            known.add(folded)
+            out.append(name)
+    return out
 
 
 def _poster_url(t: dict, tmdb_map: dict) -> str | None:
@@ -302,7 +327,7 @@ class StreamfinderExporter:
     def _load_titles(self, session: Session) -> list[dict]:
         sql = text("""
             SELECT
-                title_id, url_id, title, title_en, year, link,
+                title_id, url_id, title, title_en, alt_titles, year, link,
                 rating, votes_count, plot, image_url, title_type, parent_url,
                 vod_date, distributor, runtime_min, trailer_url, age_rating,
                 scraped_at, date_added,
@@ -311,7 +336,7 @@ class StreamfinderExporter:
             ORDER BY vod_date DESC NULLS LAST, title_id DESC
         """)
         cols = [
-            "title_id", "url_id", "title", "title_en", "year", "link",
+            "title_id", "url_id", "title", "title_en", "alt_titles", "year", "link",
             "rating", "votes_count", "plot", "image_url", "title_type", "parent_url",
             "vod_date", "distributor", "runtime_min", "trailer_url", "age_rating",
             "scraped_at", "date_added",
@@ -677,6 +702,11 @@ class StreamfinderExporter:
                 "season_no": t["season_no"],
                 "episode_no": t["episode_no"],
             }
+            # Other release names ("Squid Game" for Hra na oliheň) — search-only, and
+            # omitted when there are none so the index doesn't carry 51 k empty arrays.
+            alt = _search_names(t)
+            if alt:
+                entry["alt"] = alt
             if tid in kviff_ids:
                 entry["kviff"] = True
             # A fresh episode/season with no rating of its own borrows one to show,

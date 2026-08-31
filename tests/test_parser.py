@@ -166,6 +166,49 @@ def test_parser_extracts_new_fields(parser):
     assert result.scraped_at is not None
 
 
+ALT_NAMES_HTML = """
+<html><body>
+    <div class="film-header-name">
+        <h1 class="film-header">Hra na olihen</h1>
+        <ul class="film-names">
+            <li><img class="flag" title="Jižní Korea"> Ojingeo geim
+                <span class="normal more-name-link"><a class="more" href="#">více</a></span></li>
+            <li class="more-names hidden"><img class="flag" title="Jižní Korea"> Ojingeo geim</li>
+            <li class="more-names hidden"><img class="flag" title="Kanada"> Squid Game</li>
+            <li class="more-names hidden"><img class="flag" title="USA"> Squid Game</li>
+            <li class="more-names hidden"><img class="flag" title="Velká Británie"> Squid Game
+                <span class="normal less-name-link"><a class="more" href="#">méně</a></span></li>
+        </ul>
+    </div>
+    <div class="film-header"><h1>Hra na olihen</h1></div>
+</body></html>
+"""
+
+
+def test_parser_keeps_every_alternative_name(parser):
+    """The English name is usually NOT the first <li> — ČSFD leads with the
+    country-of-origin name and hides the rest behind a "více" toggle. Keeping only
+    the first one stored "Ojingeo geim" and made "Squid Game" unsearchable."""
+    result = parser.parse(ALT_NAMES_HTML, "https://www.csfd.cz/film/772224-hra-na-olihen/prehled/")
+    # title_en stays the origin name: it is what the detail page shows and what TMDB
+    # matches as the original title.
+    assert result.title_en == "Ojingeo geim"
+    # Deduplicated (the same string under four flags is one name) and free of the
+    # "více"/"méně" toggle text that get_text() drags in.
+    assert result.alt_titles == ["Ojingeo geim", "Squid Game"]
+
+
+def test_parser_alt_titles_none_when_page_lists_no_names(parser):
+    """Season pages carry no .film-names at all — the field must stay NULL there so
+    the loader's COALESCE keeps whatever an earlier parse found."""
+    result = parser.parse(
+        '<html><body><div class="film-header"><h1>Hra na olihen- Serie 3</h1></div></body></html>',
+        "https://www.csfd.cz/film/772224-hra-na-olihen/1234-serie-3/prehled/",
+    )
+    assert result.alt_titles is None
+    assert result.title_en is None
+
+
 def test_parser_extracts_reviews(parser):
     url = "https://www.csfd.cz/film/1-the-matrix/prehled/"
     result = parser.parse(SAMPLE_HTML, url)

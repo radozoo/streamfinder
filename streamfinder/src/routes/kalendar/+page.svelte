@@ -9,7 +9,7 @@
 	import ActiveFilters from '$lib/components/ActiveFilters.svelte';
 	import { base } from '$app/paths';
 	import { goto, afterNavigate } from '$app/navigation';
-	import { fold } from '$lib/search';
+	import { fold, getSearchIndex, matchesQuery } from '$lib/search';
 	import { favorites } from '$lib/favorites.svelte';
 	import { browser } from '$app/environment';
 	import { page } from '$app/state';
@@ -205,11 +205,18 @@
 		return map;
 	});
 
+	// Folded name haystacks, built on the first keystroke and cached for the rest —
+	// the predicate below runs over every title on each keystroke, so folding there
+	// would redo ~51 k normalisations per character, and building it eagerly would
+	// charge that to every visit that never searches.
+	let searchIndex = $derived(searchQuery.trim() ? getSearchIndex(data.titles) : null);
+
 	// Faceted filter predicate — identical to Katalog. `skip` names one dimension to
 	// ignore, so each facet's available options are computed against every OTHER
 	// filter but not its own selection → OR within a dimension, AND across.
 	let filterConfig = $derived.by(() => ({
 		q: fold(searchQuery.trim()),
+		searchIndex,
 		genres: selectedGenres,
 		platforms: selectedPlatforms,
 		countries: selectedCountries,
@@ -228,8 +235,7 @@
 		// Favourites are not a facet — they never widen a result set, so they are not
 		// skippable and take no part in the availability counts.
 		if (f.favoritesOnly && !favorites.has(t.csfd_id)) return false;
-		if (skip !== 'q' && f.q && !fold(t.title).includes(f.q) && !fold(t.title_en ?? '').includes(f.q))
-			return false;
+		if (skip !== 'q' && f.q && !matchesQuery(f.searchIndex, t, f.q)) return false;
 		if (skip !== 'genre' && f.genres.length && !f.genres.some((g) => t.genres.includes(g)))
 			return false;
 		if (skip !== 'platform' && f.platforms.length && !f.platforms.some((p) => t.platforms.includes(p)))

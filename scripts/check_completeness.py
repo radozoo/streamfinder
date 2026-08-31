@@ -12,7 +12,10 @@ Two independent checks run in the pipeline:
          failure that lost True Detective and Twin Peaks);
        - a loose minimum work count;
        - no title renders twice (the ČSFD slug-drift duplicate bug, §11);
-       - every facet pill counts the results it actually opens.
+       - every facet pill counts the results it actually opens;
+       - a set of English-name search queries each reach their title (§13 — ČSFD
+         lists the country-of-origin name first, so "Squid Game" used to find
+         nothing while the index stored "Ojingeo geim").
      Any failure exits non-zero so it can gate a deploy.
 
 Canaries are matched by their CSFD root id (the first /film/{id} segment), which is
@@ -25,6 +28,7 @@ Usage:  python3 scripts/check_completeness.py
 import argparse
 import json
 import sys
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -37,6 +41,20 @@ CANARIES = {
     930640: "Neporazitelný",
     1361414: "Čmuchalové",
     224291: "Dexter (2006) — Prime Video / SkyShowtime (undated catalog title)",
+}
+
+# CSFD root id -> a query a user would plausibly type, which MUST find that work.
+#
+# These are all titles whose ENGLISH name is not the one ČSFD lists first: title_en
+# holds the country-of-origin name ("Ojingeo geim", "Sen to Čihiro no kamikakuši"),
+# so searching the English name found nothing until the parser started keeping every
+# alternative name. The gate is the shipped index, because the site looks perfectly
+# healthy while its search quietly cannot reach a third of the catalog.
+SEARCH_CANARIES = {
+    772224: "squid game",        # Hra na oliheň
+    42136: "spirited away",      # Cesta do fantazie
+    505790: "parasite",          # Parazit
+    306731: "the intouchables",  # Nedotknutelní (title_en = "Intouchables")
 }
 
 # A complete catalog is in the thousands of works; a tiny number means the export
@@ -80,6 +98,30 @@ def _duplicate_problems(titles: list) -> list[str]:
     if dup_ep:
         problems.append(f"{len(dup_ep)} duplicate episode(s) (slug drift): e.g. {dup_ep[:3]}")
 
+    return problems
+
+
+def _fold(value: str) -> str:
+    """The frontend's search folding: strip diacritics, lowercase."""
+    return "".join(
+        c for c in unicodedata.normalize("NFD", value or "") if not unicodedata.combining(c)
+    ).lower()
+
+
+def _search_problems(titles: list) -> list[str]:
+    """Each SEARCH_CANARIES query must reach its work through the shipped index."""
+    by_root = {
+        t.get("root_id"): t for t in titles if t.get("is_toplevel") is not False
+    }
+    problems = []
+    for root_id, query in sorted(SEARCH_CANARIES.items()):
+        t = by_root.get(root_id)
+        if t is None:
+            problems.append(f"search canary [{root_id}] has no top-level row at all")
+            continue
+        haystack = _fold(" ".join([t.get("title") or "", t.get("title_en") or "", *(t.get("alt") or [])]))
+        if _fold(query) not in haystack:
+            problems.append(f"'{query}' does not find [{root_id}] {t.get('title')}")
     return problems
 
 
@@ -131,6 +173,14 @@ def main() -> int:
         present = csfd_id in root_ids
         print(f"{'ok  ' if present else 'FAIL'}: [{csfd_id}] {label}")
         ok = ok and present
+
+    search_problems = _search_problems(titles)
+    if search_problems:
+        for p in search_problems:
+            print(f"FAIL: {p}")
+        ok = False
+    else:
+        print("ok  : every search canary finds its title by its English name")
 
     facet_problems = _facet_problems(titles, args.index.parent / "dimensions.json")
     if facet_problems:

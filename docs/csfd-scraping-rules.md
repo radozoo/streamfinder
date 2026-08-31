@@ -254,3 +254,42 @@ the dimension tables gave a pill that disagreed with its own result set — "Lep
 counts from the built index, which is what the filters match against.
 `scripts/check_completeness.py` asserts it on the shipped artifact, because nothing
 about the site looks wrong when it drifts.
+
+## 13. Alternative names — the first one is NOT the English one
+
+`.film-header-name .film-names` lists a title under every country/language it was
+released in, one `<li>` per release, nearly all of them hidden behind a "více"
+toggle. The order is country-of-origin first:
+
+```
+Jižní Korea | Ojingeo geim      ← <li> #1, the only one the parser used to keep
+Jižní Korea | 오징어 게임
+Kanada      | Squid Game        ← what a user actually types
+USA         | Squid Game
+```
+
+So `title_en` is the **origin** name, not the English name. Keeping only `<li>` #1
+stored "Ojingeo geim" for Hra na oliheň, "Sen to Čihiro no kamikakuši" for Cesta do
+fantazie and the Slovak "Parazit" for Parazit — and since search matched
+`title` + `title_en` only, "Squid Game", "Spirited Away" and "Parasite" all returned
+nothing. On a 600-title sample, **30% of titles carry an English-flagged name that is
+not the one kept**, and 6% led with a non-Latin script.
+
+Rules:
+
+- Collect **every** `<li>`, not the first. Filter out the `<a>` toggle text
+  ("více"/"méně" — `get_text` drags it in) and dedupe: the same string under five
+  flags is one name. Stored in `fact_titles.alt_titles` (TEXT[]), `alt_titles[1]`
+  being `title_en`.
+- `title_en` keeps its meaning (origin name): the detail page shows it under the
+  Czech title and the TMDB enricher matches it as the original title. Search is what
+  reads the full array.
+- The exporter ships only the names that add a new string (`_search_names` drops
+  anything folding to `title`/`title_en`) — ~0.6 per title, ~0.7 MB on a 33 MB index.
+- **Season and episode pages carry no `.film-names` at all.** `alt_titles` stays
+  NULL there (the loader COALESCEs it, so a bad page can't erase a good list), and
+  the frontend's `buildSearchIndex` lets a release inherit its serial's names —
+  otherwise "squid game" finds the serial but not its Série 3 release in the Kalendár.
+- Folding is duplicated in three places on purpose (`streamfinder/src/lib/search.ts`,
+  the exporter, `check_completeness.py`): NFD-decompose, drop combining marks,
+  lowercase. Keep them identical or the canary stops testing what the site does.

@@ -5,7 +5,14 @@ export interface TitleIndex {
 	csfd_id: number | null;
 	slug: string;
 	title: string;
+	/** Country-of-origin title — NOT necessarily the English one (see `alt`). */
 	title_en: string | null;
+	/**
+	 * The title's other release names from ČSFD (English, transliterations, original
+	 * script, Slovak…), minus any that repeat `title`/`title_en`. Search-only, and
+	 * absent when the title has none.
+	 */
+	alt?: string[];
 	year: number | null;
 	rating: number | null;
 	votes_count: number | null;

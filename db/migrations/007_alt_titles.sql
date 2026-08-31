@@ -1,0 +1,15 @@
+-- Every release name a title has, not just the first one (2026-08-31).
+--
+-- ČSFD's .film-names block lists a title under each country/language it was released
+-- in: the country-of-origin name first, then transliterations, the original script,
+-- and the English/Slovak/… names — nearly all of them hidden behind a "více" toggle.
+-- The parser kept only the FIRST <li> as title_en, and that is very often not the
+-- English one: "Hra na oliheň" stored "Ojingeo geim" and lost "Squid Game";
+-- "Cesta do fantazie" stored "Sen to Čihiro no kamikakuši" and lost "Spirited Away";
+-- "Parazit" stored the Slovak name and lost "Parasite". Search matched title +
+-- title_en only, so those English names found nothing — on a ~600-title sample, 30%
+-- of titles carry an English-flagged name that is NOT the one we kept.
+--
+-- alt_titles holds the whole list (origin name included, so alt_titles[1] = title_en),
+-- deduplicated: the same string under five flags is one entry.
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS alt_titles TEXT[];

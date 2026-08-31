@@ -79,16 +79,30 @@ class VODTitleParser:
             # numbers back out of the title — but it must not drag newlines with it.
             data["title"] = clean_text(title_elem.get_text(strip=True))
 
-        # --- English/original title — .film-header-name .film-names li (first <li>) ---
-        # Exclude <a> link text (e.g. "více" expand link appended by get_text)
-        names_list = soup.select(".film-header-name .film-names li")
-        if names_list:
-            li = names_list[0]
-            title_en = clean_text("".join(
+        # --- Alternative names — .film-header-name .film-names li ---
+        # ČSFD lists every release name the title has, one <li> per country/language:
+        # the country-of-origin name first, then transliterations, the original script,
+        # and the English/Slovak/… releases — most of them hidden behind a "více" toggle.
+        #
+        # `title_en` keeps the FIRST one (the origin name, which is what the detail page
+        # shows under the Czech title and what TMDB matches as the original title), but
+        # taking only that one used to throw the rest away — and the English name is
+        # frequently NOT first: "Hra na oliheň" kept "Ojingeo geim" while "Squid Game"
+        # sat in <li> #3, "Cesta do fantazie" kept "Sen to Čihiro no kamikakuši" and
+        # dropped "Spirited Away". So all of them are kept in `alt_titles`, which is what
+        # search matches against. Exclude <a> link text ("více"/"méně" toggles, appended
+        # by get_text).
+        names = []
+        for li in soup.select(".film-header-name .film-names li"):
+            name = clean_text("".join(
                 s for s in li.strings
-                if s.strip().lower() not in ("více", "more", "")
+                if s.strip().lower() not in ("více", "méně", "more", "")
             ))
-            data["title_en"] = title_en or None
+            if name and name not in names:
+                names.append(name)  # same name under 5 flags is one name
+        if names:
+            data["title_en"] = names[0]
+            data["alt_titles"] = names
 
         # --- Year + Country + Runtime — all from .origin text ---
         # Structure: "USA / Velká Británie, (2021–2026), 24 h ..."

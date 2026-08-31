@@ -1,7 +1,7 @@
 """Data models for VOD titles with Pydantic validation."""
 
 from datetime import datetime, date, timezone
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
@@ -20,7 +20,8 @@ class VODTitle(BaseModel):
     date_added: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="When added to VOD")
 
     # New fields from parser rewrite (2026-04-10)
-    title_en: Optional[str] = Field(None, description="English/original title")
+    title_en: Optional[str] = Field(None, description="Country-of-origin title (first of alt_titles)")
+    alt_titles: Optional[List[str]] = Field(None, description="Every release name ČSFD lists (origin, transliterations, English, …) — what search matches")
     plot: Optional[str] = Field(None, description="Film synopsis/description")
     rating: Optional[int] = Field(None, description="CSFD rating 0-100, NULL if unrated")
     image_url: Optional[str] = Field(None, description="Poster image URL")

@@ -51,6 +51,11 @@ ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS episode_no INTEGER;
 ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS season_total INTEGER;
 ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS episode_total INTEGER;
 
+-- Every release name from .film-names, not just the first (migration 007).
+-- alt_titles[1] is title_en, the country-of-origin name. The English name is often
+-- further down the list, so search matches the whole array.
+ALTER TABLE csfd_vod.fact_titles ADD COLUMN IF NOT EXISTS alt_titles TEXT[];
+
 CREATE INDEX IF NOT EXISTS idx_title_type ON csfd_vod.fact_titles(title_type);
 CREATE INDEX IF NOT EXISTS idx_rating ON csfd_vod.fact_titles(rating);
 CREATE INDEX IF NOT EXISTS idx_root_id ON csfd_vod.fact_titles(root_id);

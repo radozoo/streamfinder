@@ -10,7 +10,7 @@
 	import RangeSlider from '$lib/components/RangeSlider.svelte';
 	import { base } from '$app/paths';
 	import { goto, afterNavigate } from '$app/navigation';
-	import { fold } from '$lib/search';
+	import { fold, getSearchIndex, matchesQuery } from '$lib/search';
 	import { favorites } from '$lib/favorites.svelte';
 	import { untrack } from 'svelte';
 	import { browser } from '$app/environment';
@@ -126,6 +126,12 @@
 		ensureCrewLoaded();
 	}
 
+	// Folded name haystacks, built on the first keystroke and cached for the rest —
+	// the predicate below runs over every title on each keystroke, so folding there
+	// would redo ~51 k normalisations per character, and building it eagerly would
+	// charge that to every visit that never searches.
+	let searchIndex = $derived(searchQuery.trim() ? getSearchIndex(data.titles) : null);
+
 	// ── Shared filter predicate ───────────────────────────────────────────────
 	// `skip` names one dimension to ignore. The result grid uses skip='' (apply
 	// everything); each facet computes its available options with its OWN dimension
@@ -133,6 +139,7 @@
 	// within a dimension is OR, while different dimensions combine as AND.
 	let filterConfig = $derived.by(() => ({
 		q: fold(searchQuery.trim()),
+		searchIndex,
 		recencyCutoff: recencyDays > 0 ? cutoffISO(recencyDays) : '',
 		genres: selectedGenres,
 		platforms: selectedPlatforms,
@@ -154,8 +161,7 @@
 		// Favourites are not a facet — they never widen a result set, so they are not
 		// skippable and take no part in the availability counts.
 		if (f.favoritesOnly && !favorites.has(t.csfd_id)) return false;
-		if (skip !== 'q' && f.q && !fold(t.title).includes(f.q) && !fold(t.title_en ?? '').includes(f.q))
-			return false;
+		if (skip !== 'q' && f.q && !matchesQuery(f.searchIndex, t, f.q)) return false;
 		if (skip !== 'recency' && f.recencyCutoff) {
 			const rec = recencyDate(t);
 			if (!rec || rec < f.recencyCutoff) return false;
