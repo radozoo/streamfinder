@@ -2,6 +2,7 @@
 
 import re
 import random
+import socket
 import time
 from datetime import date
 from pathlib import Path
@@ -23,6 +24,20 @@ except ImportError:
 logger = get_logger(__name__)
 
 
+class NetworkUnavailable(RuntimeError):
+    """csfd.cz cannot be reached at all — no DNS, no route, no interface.
+
+    Raised instead of retrying, because a host that cannot even be resolved will not
+    resolve on the second attempt either, and the retry ladders here are built for a
+    site that answers slowly, not for one that is not there. On 2026-09-01 the 08:00
+    refresh woke a sleeping laptop with no network and spent 2h16m grinding three
+    months of listing pages through DNS failures — a single attempt took 17 minutes —
+    then reported every month as fetch_failed. By the time the lid was opened and the
+    network came back, the run's budget was gone and the day was lost. Failing in
+    seconds leaves the whole day for the next attempt.
+    """
+
+
 class VODScraper:
     """Scrape VOD titles from csfd.cz with rate limiting and error handling."""
 
@@ -41,6 +56,92 @@ class VODScraper:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         ]
         self.session = self._create_session()
+        # Set the first time the plain-HTTP path is answered with the bot-check, and
+        # never cleared: see _plain_http_worth_trying.
+        self._plain_http_challenged = False
+
+    # ── Bot check ─────────────────────────────────────────────────────────────
+    #
+    # ČSFD fronts the site with Anubis, which serves a ~7 KB interstitial that solves
+    # a proof-of-work in the browser and only then redirects to the real page. Every
+    # asset it references is under this path, so the marker is unmistakable and
+    # survives a redesign of the page's wording.
+    _CHALLENGE_MARKER = ".within.website/x/cmd/anubis"
+
+    # How long to let that proof-of-work run. Measured: the challenge clears in a few
+    # seconds, and the 5s selector wait below was simply shorter than that — on
+    # 2026-09-01, 126 of 154 selector misses were a plain timeout with no navigation
+    # pending, i.e. the challenge page sitting there computing while we walked away
+    # from it. Twenty seconds is far past what it needs and still cheaper than the
+    # browser launch the next attempt would pay.
+    _CHALLENGE_TIMEOUT_MS = 20_000
+
+    @classmethod
+    def _is_challenge_page(cls, html: Optional[str]) -> bool:
+        return bool(html) and cls._CHALLENGE_MARKER in html
+
+    def _plain_http_worth_trying(self) -> bool:
+        """Is the requests fallback still worth a round trip?
+
+        Once ČSFD is challenging plain HTTP it challenges every plain request for the
+        rest of the run — the fallback cannot pass a proof-of-work, having no JS. Each
+        attempt then costs a rate-limiter wait and a request only to be rejected, and
+        on 2026-09-01 that happened 157 times for 146 titles. Skipping it goes straight
+        to the browser, which is the thing that can actually get the page.
+        """
+        return not self._plain_http_challenged
+
+    def _note_plain_http_challenged(self) -> None:
+        if not self._plain_http_challenged:
+            logger.info("plain_http_challenged_skipping_fallback")
+        self._plain_http_challenged = True
+
+    # ── Network presence ──────────────────────────────────────────────────────
+    #
+    # Substrings of the errors a machine with no network produces: Playwright's
+    # Chromium net errors and urllib3/requests' DNS failures. Deliberately narrow —
+    # a connection RESET or a timeout is what a site under load or a bot check looks
+    # like, and those must keep their retries.
+    _OFFLINE_SIGNS = (
+        "ERR_INTERNET_DISCONNECTED",
+        "ERR_NAME_NOT_RESOLVED",
+        "ERR_NETWORK_CHANGED",
+        "NameResolutionError",
+        "Failed to resolve",
+        "Temporary failure in name resolution",
+        "nodename nor servname provided",
+    )
+
+    _PROBE_HOST = "www.csfd.cz"
+    _PROBE_ATTEMPTS = 3
+    _PROBE_PAUSE_SECONDS = 15
+
+    def _abort_if_offline(self, error_text: str) -> None:
+        """Raise NetworkUnavailable when the error means "there is no network".
+
+        Confirmed with a DNS probe rather than taken on the error's word: a Wi-Fi
+        handover or a laptop waking up produces one resolution failure and is fine a
+        moment later, and aborting a healthy run on that would be its own bug. Three
+        probes over ~30s is the whole cost of being sure.
+        """
+        if not any(sign in error_text for sign in self._OFFLINE_SIGNS):
+            return
+        for attempt in range(self._PROBE_ATTEMPTS):
+            try:
+                socket.getaddrinfo(self._PROBE_HOST, 443)
+                logger.info("network_probe_recovered", attempt=attempt + 1)
+                return
+            except OSError as probe_error:
+                logger.warning(
+                    "network_probe_failed",
+                    attempt=attempt + 1, host=self._PROBE_HOST, error=str(probe_error),
+                )
+                if attempt < self._PROBE_ATTEMPTS - 1:
+                    time.sleep(self._PROBE_PAUSE_SECONDS)
+        raise NetworkUnavailable(
+            f"{self._PROBE_HOST} does not resolve after {self._PROBE_ATTEMPTS} probes "
+            f"— the machine has no network, not a slow site"
+        )
 
     def _create_session(self) -> requests.Session:
         """Create a requests session with retry strategy."""
@@ -156,6 +257,7 @@ class VODScraper:
                 logger.info("scrape_month_page_complete", year=year, month=month, page=page, count=len(urls))
                 return urls, html
             except Exception as e:
+                self._abort_if_offline(str(e))
                 logger.warning("playwright_month_page_failed", year=year, month=month, page=page, error=str(e))
 
         urls, html = self._scrape_vod_list_requests(url)
@@ -193,6 +295,7 @@ class VODScraper:
                 logger.info("scrape_platform_page_complete", platform=platform_slug, page=page, count=len(urls))
                 return urls, html
             except Exception as e:
+                self._abort_if_offline(str(e))
                 logger.warning("playwright_platform_page_failed", platform=platform_slug, page=page, error=str(e))
 
         urls, html = self._scrape_vod_list_requests(url)
@@ -461,6 +564,65 @@ class VODScraper:
         )
         return result
 
+    def _challenge_in_progress(self, page, wait_error: Exception) -> bool:
+        """Is the reason the selector never appeared that Anubis is still working?
+
+        Three places the answer can show, and all three are needed — the first version
+        of this asked only the page's content and missed the commonest live case within
+        minutes of shipping:
+
+          * the interstitial is sitting there computing, so its markup is the content;
+          * it has already fired and Playwright is mid-navigation to `pass-challenge`,
+            in which case `page.content()` is either the old document or an error
+            ("Execution context was destroyed") — but the wait's own message names the
+            URL it is blocked on;
+          * the page has landed on the challenge URL itself.
+        """
+        if self._CHALLENGE_MARKER in str(wait_error):
+            return True
+        try:
+            if self._CHALLENGE_MARKER in (page.url or ""):
+                return True
+        except Exception:
+            pass
+        try:
+            return self._is_challenge_page(page.content())
+        except Exception:
+            return False
+
+    def _await_selector_through_challenge(
+        self, page, selector: str, url: str, miss_event: str = "title_selector_not_found_in_page"
+    ) -> bool:
+        """Wait for `selector`, sitting through an Anubis challenge if that is what is
+        on the page. True when the selector appeared.
+
+        The plain five-second wait used to be the whole of this: a miss returned the
+        page as a failure, the caller launched a fresh browser and met the same wall,
+        and a challenged title cost two or three full navigations — 2.09 per title and
+        21s each on 2026-09-01, against 1.00 and 3.5s on a healthy day. The challenge
+        is not a failure though, it is a wait: the interstitial computes for a few
+        seconds and then redirects itself to the page we asked for. So the short wait
+        stays for the ordinary case, and a page that IS the challenge gets waited out.
+        """
+        try:
+            page.wait_for_selector(selector, timeout=5000)
+            return True
+        except Exception as first_error:
+            if not self._challenge_in_progress(page, first_error):
+                logger.warning(miss_event, selector=selector, error=str(first_error), url=url)
+                return False
+            logger.info("anubis_challenge_waiting", url=url, timeout_ms=self._CHALLENGE_TIMEOUT_MS)
+            try:
+                page.wait_for_selector(selector, timeout=self._CHALLENGE_TIMEOUT_MS)
+                logger.info("anubis_challenge_passed", url=url)
+                return True
+            except Exception as challenge_error:
+                logger.warning(
+                    "anubis_challenge_timeout",
+                    url=url, timeout_ms=self._CHALLENGE_TIMEOUT_MS, error=str(challenge_error),
+                )
+                return False
+
     def _scrape_vod_list_playwright(self, vod_page_url: str) -> List[str]:
         """
         Scrape VOD list using Playwright browser automation.
@@ -486,12 +648,14 @@ class VODScraper:
                         browser.close()
                     return []
 
-                # Wait for at least one element matching the selector, or timeout
-                try:
-                    page.wait_for_selector(selector, timeout=5000)
+                # Wait for at least one element matching the selector — through the
+                # bot check if that is what came back. Unlike the title path this does
+                # not bail on a miss: the caller judges the page by its size, and a
+                # stub is rejected there.
+                if self._await_selector_through_challenge(
+                    page, selector, vod_page_url, miss_event="selector_not_found_in_page"
+                ):
                     logger.info("playwright_selector_found", selector=selector)
-                except Exception as e:
-                    logger.warning("selector_not_found_in_page", selector=selector, error=str(e))
 
                 # Wait a bit more for dynamic loading
                 time.sleep(2)
@@ -576,11 +740,9 @@ class VODScraper:
                 # made the URL permanently un-retryable: 566 titles sat missing from
                 # the catalog this way, every one of them under 10 KB while a real
                 # page is 150 KB+. Treat it as a failed scrape so it is retried.
-                try:
-                    page.wait_for_selector(selector, timeout=5000)
+                if self._await_selector_through_challenge(page, selector, title_url):
                     logger.info("playwright_title_selector_found", selector=selector)
-                except Exception as e:
-                    logger.warning("title_selector_not_found_in_page", selector=selector, error=str(e), url=title_url)
+                else:
                     if browser:
                         browser.close()
                     return None
@@ -649,6 +811,7 @@ class VODScraper:
             return title_urls, response.text
 
         except requests.RequestException as e:
+            self._abort_if_offline(str(e))
             logger.error("scrape_vod_list_failed", error=str(e), url=vod_page_url, method="requests")
             return [], ""
 
@@ -687,9 +850,14 @@ class VODScraper:
                             logger.info("scrape_title_details_success", url=title_url, method="playwright")
                             return html_content
                     except Exception as e:
+                        self._abort_if_offline(str(e))
                         logger.warning("playwright_title_failed", error=str(e), fallback_to_requests=True)
 
-                # Fallback to requests
+                # Fallback to requests — unless ČSFD is already challenging plain HTTP,
+                # in which case the next Playwright attempt is the only thing that can
+                # get the page and this is a round trip spent to be told so again.
+                if not self._plain_http_worth_trying():
+                    continue
                 self.rate_limiter.wait()
                 response = self.session.get(
                     title_url,
@@ -710,6 +878,8 @@ class VODScraper:
                         url=title_url, method="requests",
                         attempt=attempt + 1, bytes=len(response.text),
                     )
+                    if self._is_challenge_page(response.text):
+                        self._note_plain_http_challenged()
                     if attempt >= 2:
                         return None
                     continue
@@ -734,6 +904,7 @@ class VODScraper:
                     return None
 
             except requests.RequestException as e:
+                self._abort_if_offline(str(e))
                 logger.warning(
                     "scrape_title_request_error",
                     url=title_url,

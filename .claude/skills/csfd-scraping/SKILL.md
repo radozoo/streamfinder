@@ -39,6 +39,16 @@ Full detail + code pointers in **`docs/csfd-scraping-rules.md`**. The short list
 
 - **Bot protection.** csfd.cz blocks plain HTTP and `WebFetch` (Anubis/BotStopper).
   Use the Playwright scraper. `WebSearch` is fine only to find a URL.
+- **The bot check is a WAIT, not a failure.** Anubis computes a proof-of-work in the
+  browser and then redirects itself to the real page — longer than a 5s selector wait.
+  Bailing costs a whole new browser launch per title (2.09 navigations/title at 21s vs
+  1.00 at 3.5s). Measure it as `playwright_navigate_title_start` per `cache_saved`;
+  the rate is ČSFD's and intermittent. The plain-HTTP fallback can never pass it, so
+  it retires itself for the run once challenged. Rules doc §14a.
+- **No network is not a slow site.** DNS/disconnected errors raise `NetworkUnavailable`
+  → exit code 3 → `refresh.sh` records `skipped` and retries at the next trigger. The
+  08:00 run often wakes a lid-shut laptop on battery, where `caffeinate -s` cannot hold
+  it awake; retrying DNS there cost 2h16m and a whole day. Rules doc §14b.
 - **Phantom paginator.** The listing's page 1 always links to a far page (e.g. 20)
   no matter the real count. Never trust it as the last page. The real end is a page
   whose items **repeat the previous page** (CSFD *clamps* out-of-range pages).

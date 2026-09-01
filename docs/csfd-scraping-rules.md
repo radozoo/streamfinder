@@ -293,3 +293,55 @@ Rules:
 - Folding is duplicated in three places on purpose (`streamfinder/src/lib/search.ts`,
   the exporter, `check_completeness.py`): NFD-decompose, drop combining marks,
   lowercase. Keep them identical or the canary stops testing what the site does.
+
+## 14. The bot check is a WAIT, not a failure — and no network is not a slow site
+
+Two ways the scrape wastes a whole day, both fixed at one place each in
+`extraction/scraper.py`.
+
+### 14a. Anubis needs a few seconds; five was not enough
+
+ČSFD fronts the site with Anubis. Its interstitial is a ~7 KB page that computes a
+proof-of-work in the browser and *then* redirects itself to the page you asked for.
+Every asset it loads sits under `.within.website/x/cmd/anubis`, which is the marker to
+test for (`_is_challenge_page`).
+
+The Playwright path waited 5 s for `.film-header h1` and treated a miss as a dead
+page. But the challenge takes longer than that: on 2026-09-01, **126 of 154 selector
+misses were a plain timeout with no navigation pending** — the challenge sitting there
+computing while we walked away from it. The caller then launched a whole new browser
+and met the same wall: **2.09 navigations per title at ~21 s each**, against 1.00 at
+3.5 s on a healthy day. 146 of 200 titles done when the run was killed.
+
+So `_await_selector_through_challenge` keeps the 5 s wait for the ordinary page and,
+when the page in hand IS the challenge, waits it out (20 s). Both Playwright paths use
+it — titles and listings.
+
+**Corollary:** the plain-HTTP fallback can never pass a proof-of-work, having no JS.
+Once it has been served the interstitial it will be served it for the rest of the run,
+so `_plain_http_challenged` retires it and the retry goes straight back to the browser
+— 157 pointless round trips for 146 titles on that same run.
+
+**When measuring, count `playwright_navigate_title_start` per `cache_saved`.** 1.00 is
+healthy, 2.00 means the challenge is being paid for twice. The rate is intermittent and
+ČSFD's, not ours: 1.00 for all of 9.–20. 8., 1.85–2.07 on 21.–22. 8., back to 1.06 on
+30. 8., 2.09 on 1. 9.
+
+### 14b. A DNS failure must abort, not retry
+
+`NetworkUnavailable` is raised as soon as an error means "there is no network"
+(`ERR_INTERNET_DISCONNECTED`, `ERR_NAME_NOT_RESOLVED`, urllib3's `NameResolutionError`,
+…) — confirmed by a DNS probe first, three tries over ~30 s, so a Wi-Fi handover does
+not abort a healthy run. Deliberately narrow: a connection reset, a timeout or a 429 is
+what a loaded site or a bot check looks like, and those keep their retries.
+
+Why: the 08:00 trigger wakes a laptop whose lid has been shut since the night, and on
+battery `caffeinate -s` cannot hold it awake — clamshell sleep wins, so the run gets
+DarkWake bursts with no network. On 2026-09-01 the retry ladders ground three months of
+listing pages through DNS failures for **2 h 16 min** (a single attempt took 17
+minutes), reported every month as `fetch_failed`, and by the time the lid was opened
+the awake budget was gone. Failing in seconds leaves the whole day for the next try.
+
+`csfd_vod.main` maps it to **exit code 3**, and `refresh.sh` treats 3 the way it treats
+a laptop that slept: `skipped`, quiet, retried at the next trigger. It is not a fault
+to wake a human for — it is the wrong moment.

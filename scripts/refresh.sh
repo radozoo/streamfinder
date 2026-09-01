@@ -320,6 +320,17 @@ if [ "$UPDATE_RC" = "124" ]; then
   write_status skipped update "machine was asleep for most of the run, nothing published"
   exit 0
 fi
+# 3 = csfd_vod could not reach csfd.cz at all — no DNS, no interface. The 08:00
+# trigger wakes a laptop whose lid has been shut since the night before, and on
+# battery `caffeinate -s` cannot hold it awake, so it works in DarkWake bursts with no
+# network. That is not a fault to wake a human for; it is the wrong moment. The scrape
+# now says so in seconds instead of grinding DNS failures for hours — on 2026-09-01 it
+# spent 2h16m that way and then had no budget left for the work once the lid opened.
+if [ "$UPDATE_RC" = "3" ]; then
+  log "no network reachable — skipping, the next trigger retries"
+  write_status skipped update "csfd.cz unreachable (no DNS), nothing published"
+  exit 0
+fi
 [ "$UPDATE_RC" = "0" ] || fail update "csfd update returned $UPDATE_RC"
 
 # It finished, but in fits and starts — say so, because the yield will look thin and

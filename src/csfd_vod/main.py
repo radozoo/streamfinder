@@ -2,6 +2,7 @@
 
 import json
 import re
+import sys
 import uuid
 import argparse
 from pathlib import Path
@@ -11,7 +12,7 @@ from sqlalchemy import text
 
 from csfd_vod.config import load_config_from_env, load_selectors
 from csfd_vod.logger import setup_logging, get_logger
-from csfd_vod.extraction.scraper import VODScraper
+from csfd_vod.extraction.scraper import VODScraper, NetworkUnavailable
 from csfd_vod.extraction.rate_limiter import RateLimiter
 from csfd_vod.transformation.parser import VODTitleParser
 from csfd_vod.transformation.list_merge import merge_list_metadata
@@ -812,6 +813,24 @@ def main():
     args = parser.parse_args()
     setup_logging(args.log_level)
 
+    # Exit code 3 means "there was no network", and it is deliberately not a failure
+    # for the caller to shout about: nothing is broken, the machine simply was not
+    # online when its turn came. scripts/refresh.sh treats it the way it treats a
+    # laptop that slept through the run — quiet, and retried at the next trigger.
+    try:
+        result = _dispatch(args)
+    except NetworkUnavailable as e:
+        logger.error("network_unavailable", command=args.command, error=str(e))
+        sys.exit(3)
+
+    if result.get("success"):
+        logger.info("command_success", command=args.command, result=result)
+    else:
+        logger.error("command_failure", command=args.command, result=result)
+
+
+def _dispatch(args) -> dict:
+    result = {"success": False, "reason": f"unknown command: {args.command}"}
     if args.command == "harvest":
         result = cmd_harvest(args)
     elif args.command == "harvest-platforms":
@@ -830,11 +849,7 @@ def main():
         result = cmd_enrich(args)
     elif args.command == "update":
         result = cmd_update(args)
-
-    if result.get("success"):
-        logger.info("command_success", command=args.command, result=result)
-    else:
-        logger.error("command_failure", command=args.command, result=result)
+    return result
 
 
 if __name__ == "__main__":
