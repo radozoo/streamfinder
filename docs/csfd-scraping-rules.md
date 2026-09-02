@@ -345,3 +345,29 @@ the awake budget was gone. Failing in seconds leaves the whole day for the next 
 `csfd_vod.main` maps it to **exit code 3**, and `refresh.sh` treats 3 the way it treats
 a laptop that slept: `skipped`, quiet, retried at the next trigger. It is not a fault
 to wake a human for — it is the wrong moment.
+
+### 14c. `networkidle` is unreachable on a challenged page
+
+`page.goto(..., wait_until="networkidle")` does not settle while Anubis runs its
+proof-of-work worker and chains a redirect, so goto raises at 30s — *before* §14a's
+challenge wait ever gets a turn. It is not an edge case: **67 of 336 navigations** on
+2026-09-01, and it took August off that day's harvest entirely (three goto timeouts,
+month abandoned, ~200 URLs never seen). `_navigate` waits for `domcontentloaded` and
+swallows the failure; readiness is decided by the selector, which is the thing that
+actually matters. Both figures went to zero the next day.
+
+**And a failed forced refetch must fall back to the cached listing.** `refetch_from`
+marks the discover window stale, and when three fetches come back stubs the month used
+to be dropped — while a valid 292 KB copy from its own earlier attempt an hour before
+sat right there on disk. Stale beats absent: absent drops every URL on the page.
+`list_page_refetch_failed_using_cached` says it happened and `stale_pages_used` counts
+it, because a month read from an hour-old listing is not fresh either.
+
+### 14d. The awake budget is two hours, and that is not slack
+
+`MAX_AWAKE_SECONDS` was an hour while a challenged title cost nothing. It now costs
+5-15s instead of 3.5s, so 200 refresh titles alone can be 50 minutes before discover,
+parse, enrich and export get a turn. On 2026-09-02 the 08:00 run scraped perfectly —
+`incomplete_months: 0`, zero goto timeouts, nav/title 1.31 — and was still killed 8
+minutes short of publishing. If a run has to be cut, cut `--refresh-budget` (ratings
+mature a day later, nobody notices) rather than the wall it dies at.

@@ -608,6 +608,11 @@ def cmd_update(args) -> dict:
         incomplete = getattr(scraper, "incomplete_months", [])
         if incomplete:
             logger.error("update_discover_incomplete", run_id=run_id, incomplete_months=incomplete)
+        # A month read from an hour-old listing is not a failure, but it is not fresh
+        # either: whatever ČSFD added to it since is invisible to this run.
+        stale_used = getattr(scraper, "stale_pages_used", 0)
+        if stale_used:
+            logger.warning("update_discover_served_stale_pages", run_id=run_id, pages=stale_used)
 
         # Union new URLs into the master list (never shrink it — old months stay).
         vod_urls_path = Path(config.cache_dir) / "vod_urls.json"

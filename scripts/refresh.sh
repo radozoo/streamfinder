@@ -81,10 +81,15 @@ LOCK="$LOG_DIR/.lock"
 # the wall cutoff below are testable at any hour of the day.
 SCHEDULED_HOUR="${SCHEDULED_HOUR:-8}"
 
-# An hour of awake time is generous: a healthy refresh is ~30 minutes of real work
-# (767 titles in 45 minutes on 2026-08-31). Reaching an hour without finishing means
-# the run is not making progress, which is a fault worth a notification.
-MAX_AWAKE_SECONDS="${MAX_AWAKE_SECONDS:-3600}"
+# Two hours of awake time. An hour was the original figure and it stopped being
+# generous the moment ČSFD started serving its bot check in earnest: a challenged
+# title costs 5-15s instead of 3.5s, so 200 refresh titles alone can be 50 minutes
+# before discover, parse, enrich and export get a turn. On 2026-09-02 the 08:00 run
+# scraped perfectly and was still killed 8 minutes short of publishing, with the day
+# saved only by a human restarting it by hand — the budget, not the site, was the
+# thing standing in the way. Reaching two hours without finishing still means the run
+# is not making progress, which is a fault worth a notification.
+MAX_AWAKE_SECONDS="${MAX_AWAKE_SECONDS:-7200}"
 
 # The wall-clock stop exists for one reason only: a run must not still be holding
 # the lock when the next scheduled trigger arrives, or the following day gets

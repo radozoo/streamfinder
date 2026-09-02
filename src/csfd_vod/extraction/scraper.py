@@ -59,6 +59,7 @@ class VODScraper:
         # Set the first time the plain-HTTP path is answered with the bot-check, and
         # never cleared: see _plain_http_worth_trying.
         self._plain_http_challenged = False
+        self.stale_pages_used = 0
 
     # ── Bot check ─────────────────────────────────────────────────────────────
     #
@@ -436,6 +437,10 @@ class VODScraper:
         # Completeness report: months where we failed to reach CSFD's declared last
         # page. Empty after a healthy harvest; inspected by the caller as a guard.
         self.incomplete_months: List[dict] = []
+        # How many pages had to be served from a stale cached copy because the forced
+        # refetch kept coming back a stub. Zero on a healthy harvest; a high count means
+        # the discover window is being read from yesterday's listings.
+        self.stale_pages_used = 0
 
         if list_html_dir is not None:
             list_html_dir.mkdir(parents=True, exist_ok=True)
@@ -470,6 +475,7 @@ class VODScraper:
                     page_path is not None and page_path.exists() and not stale
                     and page_path.stat().st_size >= self._MIN_LISTING_PAGE_BYTES
                 )
+                served_from_stale = False
                 if cached_ok:
                     html = page_path.read_text(encoding="utf-8")
                     urls = self._extract_title_urls(html)
@@ -486,12 +492,35 @@ class VODScraper:
                             attempt=attempt + 1, bytes=len(html),
                         )
                     else:
-                        # Never cache the stub, and never let it read as "end of
-                        # month" — that is how a truncated harvest looks healthy.
-                        reason = "fetch_failed"
-                        logger.error("list_page_fetch_failed", year=year, month=month, page=page)
-                        break
-                    if page_path is not None:
+                        # Three stubs in a row. Before giving the month up, take the
+                        # cached copy if there is one: a listing from an hour ago is
+                        # stale, but a stale month is a month, and abandoning it drops
+                        # every URL on the page. On 2026-09-01 the 17:38 run refused
+                        # August this way while a valid 292 KB copy from 17:10 — its
+                        # own earlier attempt — sat right there on disk, and the month
+                        # contributed nothing at all.
+                        if (
+                            page_path is not None and page_path.exists()
+                            and page_path.stat().st_size >= self._MIN_LISTING_PAGE_BYTES
+                        ):
+                            logger.warning(
+                                "list_page_refetch_failed_using_cached",
+                                year=year, month=month, page=page,
+                                bytes=page_path.stat().st_size,
+                            )
+                            html = page_path.read_text(encoding="utf-8")
+                            urls = self._extract_title_urls(html)
+                            self.stale_pages_used += 1
+                            served_from_stale = True
+                        else:
+                            # Never cache the stub, and never let it read as "end of
+                            # month" — that is how a truncated harvest looks healthy.
+                            reason = "fetch_failed"
+                            logger.error("list_page_fetch_failed", year=year, month=month, page=page)
+                            break
+                    # Nothing to write back when the page IS the cached copy — and a
+                    # "list_page_cached" line there would read as a fresh fetch.
+                    if page_path is not None and not served_from_stale:
                         page_path.write_text(html, encoding="utf-8")
                         logger.info("list_page_cached", path=str(page_path))
 
@@ -563,6 +592,25 @@ class VODScraper:
             incomplete_months=len(self.incomplete_months),
         )
         return result
+
+    def _navigate(self, page, url: str) -> None:
+        """Go to `url` and return as soon as there is a document to inspect.
+
+        The wait used to be `networkidle`, which a bot-checked page does not reach:
+        Anubis runs a proof-of-work worker and chains a redirect, so the 30s budget
+        expires with the navigation still "in flight" and goto raises — before the
+        selector wait below ever gets a chance to sit the challenge out. That is what
+        took August off the 2026-09-01 17:38 harvest entirely: three attempts, three
+        goto timeouts, month abandoned, ~200 URLs never seen.
+        `domcontentloaded` is the honest signal here; readiness is then decided by the
+        selector, which is the thing we actually need. A navigation that fails outright
+        is not raised either — the page may still hold the challenge, and the selector
+        wait is a better judge of that than an exception is.
+        """
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except Exception as nav_error:
+            logger.warning("playwright_navigation_incomplete", url=url, error=str(nav_error))
 
     def _challenge_in_progress(self, page, wait_error: Exception) -> bool:
         """Is the reason the selector never appeared that Anubis is still working?
@@ -637,7 +685,7 @@ class VODScraper:
                 )
 
                 logger.info("playwright_navigate_start", url=vod_page_url)
-                page.goto(vod_page_url, wait_until="networkidle", timeout=30000)
+                self._navigate(page, vod_page_url)
 
                 # Wait for content to stabilize - wait for either the selector to appear
                 # or timeout after waiting
@@ -722,7 +770,7 @@ class VODScraper:
                 )
 
                 logger.info("playwright_navigate_title_start", url=title_url)
-                page.goto(title_url, wait_until="networkidle", timeout=30000)
+                self._navigate(page, title_url)
 
                 # Wait for mandatory title selector to appear (confirms page loaded correctly)
                 selector = self.selectors.get("title_page", {}).get("title_selector")

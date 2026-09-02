@@ -20,9 +20,11 @@ from csfd_vod.extraction.rate_limiter import RateLimiter
 from csfd_vod.extraction.scraper import NetworkUnavailable, VODScraper
 
 
+# The production selectors, so a test cannot pass against a shape the real run
+# never sees (config/selectors.json).
 SELECTORS = {
     "title_page": {"title_selector": ".film-header h1"},
-    "vod_page": {"title_link_selector": ".article-content a"},
+    "vod_page": {"title_link_selector": "a[href*='/film/']"},
 }
 
 # The real interstitial, trimmed: what identifies it is the path every one of its
@@ -228,3 +230,76 @@ def test_a_torn_down_page_with_no_challenge_anywhere_is_still_a_failure():
     page = FakePage(None, url="https://www.csfd.cz/film/1-x/prehled/")
     assert not make_scraper()._await_selector_through_challenge(page, ".film-header h1", "u")
     assert page.waits == [5000]
+
+
+# ── navigation must not be judged by networkidle ──────────────────────────────
+
+class FakeNavPage:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.goto_args = None
+
+    def goto(self, url, wait_until, timeout):
+        self.goto_args = (url, wait_until, timeout)
+        if self.fail:
+            raise TimeoutError(f"Page.goto: Timeout {timeout}ms exceeded")
+
+
+def test_navigation_waits_for_a_document_not_for_an_idle_network():
+    """`networkidle` never arrives on a challenged page: Anubis runs a proof-of-work
+    worker and chains a redirect, so goto raised before the challenge could be waited
+    out. That is what took August off the 2026-09-01 17:38 harvest — three goto
+    timeouts, month abandoned, ~200 URLs never seen."""
+    page = FakeNavPage()
+    make_scraper()._navigate(page, "https://www.csfd.cz/vod/?year=2026&month=8&page=1")
+    assert page.goto_args[1] == "domcontentloaded"
+
+
+def test_a_failed_navigation_does_not_raise_so_the_selector_can_judge():
+    page = FakeNavPage(fail=True)
+    make_scraper()._navigate(page, "https://www.csfd.cz/x/")  # must not raise
+
+
+# ── a stale month is still a month ────────────────────────────────────────────
+
+def test_a_failed_refetch_falls_back_to_the_cached_listing(tmp_path, monkeypatch):
+    """The 17:38 run refused August while its own 292 KB copy from 17:10 sat on disk,
+    and the month contributed nothing. Stale beats absent: absent drops every URL."""
+    s = make_scraper()
+    lists = tmp_path / "vod_lists"
+    lists.mkdir()
+    good = (
+        '<html><body>'
+        + '<a href="/film/1-a/prehled/">a</a><a href="/film/2-b/prehled/">b</a>'
+        + "<!-- padding -->" * 4000  # over _MIN_LISTING_PAGE_BYTES
+        + '</body></html>'
+    )
+    assert len(good) >= VODScraper._MIN_LISTING_PAGE_BYTES
+    (lists / "2026_08_p01.html").write_text(good, encoding="utf-8")
+
+    # Every fresh fetch comes back as the 7 KB interstitial.
+    monkeypatch.setattr(
+        VODScraper, "scrape_vod_month_page",
+        lambda self, year, month, page: ([], CHALLENGE_HTML),
+    )
+    urls = s.scrape_vod_all_urls(
+        from_year=2026, from_month=8, list_html_dir=lists, refetch_from=(2026, 8),
+    )
+    assert s.stale_pages_used >= 1
+    assert "https://www.csfd.cz/film/1-a/prehled/" in urls
+    # The cached page must not be overwritten by the stub it stood in for.
+    assert (lists / "2026_08_p01.html").read_text(encoding="utf-8") == good
+
+
+def test_no_cached_copy_still_means_the_month_is_reported_incomplete(tmp_path, monkeypatch):
+    s = make_scraper()
+    lists = tmp_path / "vod_lists"
+    monkeypatch.setattr(
+        VODScraper, "scrape_vod_month_page",
+        lambda self, year, month, page: ([], CHALLENGE_HTML),
+    )
+    s.scrape_vod_all_urls(
+        from_year=2026, from_month=8, list_html_dir=lists, refetch_from=(2026, 8),
+    )
+    assert s.stale_pages_used == 0
+    assert any(m["reason"] == "fetch_failed" for m in s.incomplete_months)
