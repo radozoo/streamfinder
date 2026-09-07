@@ -13,6 +13,7 @@ deciding when the export has to carry them separately from `vod_date`.
 """
 
 from csfd_vod.export.streamfinder_exporter import _differs
+from csfd_vod.list_index import overview_urls
 from csfd_vod.loading.postgres_loader import event_rows
 from csfd_vod.transformation.ids import csfd_id, root_id, segment_ids
 
@@ -104,3 +105,76 @@ class TestExportCondition:
     def test_no_events_at_all(self):
         assert not _differs([], "2026-09-07")
         assert not _differs([], None)
+
+
+class TestListingUrlRecovery:
+    """vod_urls.json is written from what a harvest saw; this reads the index back.
+
+    791 URLs had leaked out of the master list by 2026-09-07 — named by cached
+    listings, absent from vod_urls.json — and 166 of them were titles the catalog did
+    not have at all. A URL missing there is never scraped and never parsed, so the
+    recovery has to keep exactly the shape the scrape queue accepts: an overview page,
+    nothing else. It reads the listing index rather than the HTML because re-parsing
+    728 MB to answer this cost 85 seconds on every run, against 0.05 s for the index.
+    """
+
+    def test_recovers_titles_and_episodes(self):
+        pages = {"2020_05_p01.html": [
+            {"film_url": "https://www.csfd.cz/film/855289-pushpavalli/883961-season-1/prehled/"},
+            {"film_url": "https://www.csfd.cz/film/1896692-kolizia/prehled/"},
+        ]}
+        assert overview_urls(pages) == [
+            "https://www.csfd.cz/film/1896692-kolizia/prehled/",
+            "https://www.csfd.cz/film/855289-pushpavalli/883961-season-1/prehled/",
+        ]
+
+    def test_drops_everything_that_is_not_an_overview_page(self):
+        # Recovering a review page or a /vod/ facet would put junk on the scrape
+        # queue forever, and nothing downstream would ever remove it.
+        pages = {"p.html": [
+            {"film_url": "https://www.csfd.cz/film/1896692-kolizia/recenze/"},
+            {"film_url": "https://www.csfd.cz/vod/netflix/"},
+            {"film_url": "https://www.csfd.cz/film/1896692-kolizia/prehled/?x=1"},
+            {"film_url": "https://www.csfd.cz/film/1896692-kolizia/prehled/"},
+        ]}
+        assert overview_urls(pages) == ["https://www.csfd.cz/film/1896692-kolizia/prehled/"]
+
+    def test_the_same_title_on_many_pages_is_returned_once(self):
+        entry = {"film_url": "https://www.csfd.cz/film/1896692-kolizia/prehled/"}
+        assert len(overview_urls({"a.html": [entry], "b.html": [entry]})) == 1
+
+    def test_an_entry_with_no_url_is_ignored_not_a_crash(self):
+        assert overview_urls({"a.html": [{}, {"film_url": None}]}) == []
+
+    def test_an_empty_index_recovers_nothing(self):
+        assert overview_urls({}) == []
+
+    def test_a_url_already_known_is_not_recovered_again(self):
+        url = "https://www.csfd.cz/film/1896692-kolizia/prehled/"
+        assert overview_urls({"a.html": [{"film_url": url}]}, {url}) == []
+
+    def test_a_known_title_under_a_different_slug_is_not_a_missing_title(self):
+        # THE ping-pong guard. ČSFD serves the same id under Czech and Slovak names,
+        # and dedupe_titles.py prunes the losing slug from vod_urls.json on purpose.
+        # Comparing URLs instead of ids would re-add all 60 of them the same night,
+        # scrape them, recreate the duplicate rows, and go round again forever.
+        known = {"https://www.csfd.cz/film/612768-greyhound-bitva-o-atlantik/prehled/"}
+        listed = {"a.html": [
+            {"film_url": "https://www.csfd.cz/film/612768-greyhound-bitka-o-atlantik/prehled/"}]}
+        assert overview_urls(listed, known) == []
+
+    def test_one_slug_per_id_even_when_the_listings_name_several(self):
+        listed = {"a.html": [
+            {"film_url": "https://www.csfd.cz/film/795091-hlboka-voda/prehled/"},
+            {"film_url": "https://www.csfd.cz/film/795091-hluboka-voda/prehled/"},
+        ]}
+        assert len(overview_urls(listed)) == 1
+
+    def test_a_genuinely_unknown_title_still_gets_recovered(self):
+        # The 166 that mattered. Guarding against slug variants must not become
+        # guarding against everything.
+        known = {"https://www.csfd.cz/film/612768-greyhound-bitva-o-atlantik/prehled/"}
+        listed = {"a.html": [
+            {"film_url": "https://www.csfd.cz/film/857377-antarktida/1617686-epizoda-6/prehled/"}]}
+        assert overview_urls(listed, known) == [
+            "https://www.csfd.cz/film/857377-antarktida/1617686-epizoda-6/prehled/"]

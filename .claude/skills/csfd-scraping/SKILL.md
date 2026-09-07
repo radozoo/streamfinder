@@ -66,6 +66,18 @@ Full detail + code pointers in **`docs/csfd-scraping-rules.md`**. The short list
   alone lets stale values survive a re-parse.
 - **Not everything that looks like junk is junk:** `"Director X"` is a real director.
   Verify against the scraped page before deleting suspicious-looking data.
+- **`vod_urls.json` leaks — reconcile it.** The master list is written from what a
+  harvest saw *during that run*; anything lost between extracting a URL and writing
+  the file was gone for good, and a URL missing there is never scraped, never parsed
+  and never in the catalog. 791 URLs had leaked out by 2026-09-07 across both listing
+  sources, 166 of them titles the catalog did not have at all. `cmd_scrape` and
+  `update`'s discover now recover them from the listing INDEX (`list_index.overview_urls`,
+  0.05 s — not by re-reading the 728 MB of HTML, which cost 85 s a run). No network,
+  union-only, and compared **by `csfd_id`, not by URL** — ČSFD serves the same title
+  under Czech and Slovak slugs, so a URL-level compare re-adds what `dedupe_titles.py`
+  just pruned and ping-pongs forever. Discover only *records* the backlog; `csfd scrape --limit`
+  drains it, because an unbounded download loop in discover kills the run (§14d).
+  Rules doc §16.
 - **Two harvest sources.** The monthly `/vod/?year=&month=` feed only sees a
   title's dated VOD *arrival* — an old catalog title with no dated event (Dexter,
   Game of Thrones) is invisible to it, and **this recurs indefinitely** as

@@ -64,6 +64,16 @@ MIN_TOPLEVEL_WORKS = 5000
 
 DEFAULT_INDEX = Path("streamfinder/static/data/titles_index.json")
 DEFAULT_LIST_INDEX = Path("cache/list_index.json")
+DEFAULT_VOD_URLS = Path("cache/vod_urls.json")
+
+# Same shape the harvester keeps: a film/serial/season/episode overview page.
+OVERVIEW_RE = re.compile(r"^https://www\.csfd\.cz/film/\d+[^/]*/(?:\d+[^/]*/)?prehled/$")
+
+
+def _url_id(url: str):
+    """The entity's own ČSFD id — the LAST /{id}-slug/ segment. Mirrors ids.py."""
+    seg = SEGMENT_ID_RE.findall(url or "")
+    return int(seg[-1]) if seg else None
 
 # Each "/{id}-slug/" segment of a ČSFD URL is an id, and the LAST one is the entity
 # itself. Mirrors transformation/ids.py — a plain "/film/(\d+)" would see only the
@@ -203,10 +213,41 @@ def _calendar_problems(titles: list, list_index_path: Path) -> list[str]:
     return problems[:5] + ([f"...and {len(problems) - 5} more"] if len(problems) > 5 else [])
 
 
+def _url_list_problems(list_index_path: Path, vod_urls_path: Path) -> list[str]:
+    """Every title the listings name must be on the list of titles to scrape.
+
+    `vod_urls.json` is written from what a harvest saw during that run, so a URL that
+    fell out between the fetch and the file was gone for good — and a URL missing
+    there is never scraped, never parsed and never in the catalog, no matter how many
+    times the pipeline runs. 791 had leaked out by 2026-09-07, 166 of them titles the
+    catalog did not have at all. Checked against the listing index rather than the
+    HTML, because the index is already the parsed truth about what those pages said.
+
+    Compared by **csfd_id, not by URL**: ČSFD serves the same title under several
+    slugs (`greyhound-bitva-` and `-bitka-o-atlantik`), identity is the id (§11), and
+    `dedupe_titles.py` deliberately prunes the losing slug from vod_urls.json. A
+    URL-level comparison would fail on every title it had just correctly cleaned up.
+    """
+    if not list_index_path.exists() or not vod_urls_path.exists():
+        return []  # nothing cached yet — not this check's business
+    index = json.loads(list_index_path.read_text(encoding="utf-8"))
+    known = {_url_id(u) for u in json.loads(vod_urls_path.read_text(encoding="utf-8"))}
+
+    missing = {}
+    for page in index.get("pages", {}).values():
+        for entry in page.get("entries", []):
+            url = entry.get("film_url")
+            if url and OVERVIEW_RE.match(url) and (cid := _url_id(url)) not in known:
+                missing.setdefault(cid, url)
+    problems = [f"listed on ČSFD but not in vod_urls.json: {u}" for u in sorted(missing.values())]
+    return problems[:5] + ([f"...and {len(problems) - 5} more"] if len(problems) > 5 else [])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--index", type=Path, default=DEFAULT_INDEX)
     ap.add_argument("--list-index", type=Path, default=DEFAULT_LIST_INDEX)
+    ap.add_argument("--vod-urls", type=Path, default=DEFAULT_VOD_URLS)
     args = ap.parse_args()
 
     if not args.index.exists():
@@ -245,6 +286,14 @@ def main() -> int:
         ok = False
     else:
         print("ok  : every facet count matches the index it filters")
+
+    url_problems = _url_list_problems(args.list_index, args.vod_urls)
+    if url_problems:
+        for p in url_problems:
+            print(f"FAIL: {p}")
+        ok = False
+    else:
+        print("ok  : every title the listings name is in vod_urls.json")
 
     cal_problems = _calendar_problems(titles, args.list_index)
     if cal_problems:

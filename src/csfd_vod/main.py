@@ -16,7 +16,7 @@ from csfd_vod.extraction.scraper import VODScraper, NetworkUnavailable
 from csfd_vod.extraction.rate_limiter import RateLimiter
 from csfd_vod.transformation.parser import VODTitleParser
 from csfd_vod.transformation.list_merge import merge_list_metadata
-from csfd_vod.list_index import ListIndex
+from csfd_vod.list_index import ListIndex, overview_urls
 from csfd_vod.loading.postgres_loader import PostgresLoader
 from csfd_vod.cache import HTMLCache
 from csfd_vod.parse_state import ParseState, plan_parse
@@ -44,6 +44,44 @@ def _make_scraper(config, selectors) -> VODScraper:
         rate_limiter=rate_limiter,
         user_agents=config.scrape.user_agents,
     )
+
+
+def _merge_vod_urls(config, urls) -> dict:
+    """Union `urls` into the master vod_urls.json. Never shrinks it.
+
+    The master list is append-only on purpose: a partial harvest (--from-year, a
+    single platform, a two-month discover window) must not drop URLs a wider run
+    found earlier. Every caller wanted the same four lines, and the copies are how
+    a fourth source ends up merging slightly differently from the other three.
+    """
+    path = Path(config.cache_dir) / "vod_urls.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = set(json.loads(path.read_text(encoding="utf-8"))) if path.exists() else set()
+    incoming = set(urls)
+    merged = sorted(existing | incoming)
+    path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"new": sorted(incoming - existing), "merged": merged, "path": str(path)}
+
+
+def _reconcile_vod_urls(config) -> dict:
+    """Put back every listing URL that never reached vod_urls.json.
+
+    Purely local — it reads the listing index, which is already on disk, so it costs
+    no network and cannot be wrong in a way a fetch could. Runs before anything
+    decides what to download, because a URL missing from the master list is a title
+    that is never scraped, never parsed and never in the catalog, however many times
+    the pipeline runs. See docs/csfd-scraping-rules.md §16.
+    """
+    list_html_dir = Path(config.cache_dir) / "vod_lists"
+    if not list_html_dir.exists():
+        return {"recovered": 0}
+    pages, _ = ListIndex(config.cache_dir, list_html_dir).load()
+    path = Path(config.cache_dir) / "vod_urls.json"
+    known = set(json.loads(path.read_text(encoding="utf-8"))) if path.exists() else set()
+    recovered = _merge_vod_urls(config, overview_urls(pages, known))["new"]
+    if recovered:
+        logger.warning("vod_urls_reconciled", recovered=len(recovered), sample=recovered[:3])
+    return {"recovered": len(recovered)}
 
 
 def _load_events_to_db(list_pages, config, rebuild=False):
@@ -84,15 +122,9 @@ def cmd_harvest(args) -> dict:
     list_html_dir = Path(config.cache_dir) / "vod_lists"
     urls = scraper.scrape_vod_all_urls(from_year=args.from_year, list_html_dir=list_html_dir)
 
-    # Union into the master vod_urls.json (never overwrite) — a partial or
-    # recent-years-only harvest (--from-year) must not drop URLs discovered by
-    # earlier, wider harvests. Mirrors cmd_harvest_platforms' merge behavior.
-    vod_urls_path = Path(config.cache_dir) / "vod_urls.json"
-    vod_urls_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = json.loads(vod_urls_path.read_text(encoding="utf-8")) if vod_urls_path.exists() else []
-    merged = sorted(set(existing) | set(urls))
-    vod_urls_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
-    urls = merged
+    merge = _merge_vod_urls(config, urls)
+    vod_urls_path = Path(merge["path"])
+    urls = merge["merged"]
 
     # Completeness guard: every month must have been harvested to CSFD's own last
     # page. Any shortfall means a month was silently truncated (the class of bug
@@ -156,11 +188,8 @@ def cmd_harvest_platforms(args) -> dict:
     if not complete:
         logger.error("cmd_harvest_platforms_incomplete", run_id=run_id, incomplete_platforms=incomplete)
 
-    vod_urls_path = Path(config.cache_dir) / "vod_urls.json"
-    existing = json.loads(vod_urls_path.read_text(encoding="utf-8")) if vod_urls_path.exists() else []
-    new_urls = sorted(all_urls - set(existing))
-    merged = sorted(set(existing) | all_urls)
-    vod_urls_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+    merge = _merge_vod_urls(config, all_urls)
+    vod_urls_path, new_urls, merged = Path(merge["path"]), merge["new"], merge["merged"]
 
     logger.info(
         "cmd_harvest_platforms_complete",
@@ -192,6 +221,10 @@ def cmd_scrape(args) -> dict:
 
     scraper = _make_scraper(config, selectors)
     cache = HTMLCache(config.cache_dir)
+
+    # Before deciding what to download, make sure the list of what EXISTS is not
+    # missing anything the cached listings already named (see _reconcile_vod_urls).
+    _reconcile_vod_urls(config)
 
     # Stage 1: get URL list — prefer harvested list, fall back to live scrape
     vod_urls_path = Path(config.cache_dir) / "vod_urls.json"
@@ -662,12 +695,13 @@ def cmd_update(args) -> dict:
         if stale_used:
             logger.warning("update_discover_served_stale_pages", run_id=run_id, pages=stale_used)
 
-        # Union new URLs into the master list (never shrink it — old months stay).
-        vod_urls_path = Path(config.cache_dir) / "vod_urls.json"
-        existing = json.loads(vod_urls_path.read_text(encoding="utf-8")) if vod_urls_path.exists() else []
-        merged = sorted(set(existing) | set(recent))
-        new_urls = sorted(set(recent) - set(existing))
-        vod_urls_path.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+        new_urls = _merge_vod_urls(config, recent)["new"]
+        # And put back anything an earlier run's listings named but never recorded.
+        # Local and free, so it heals the master list every night — but it only
+        # RECORDS them. Draining the backlog is `csfd scrape`'s job, which is
+        # bounded by --limit and resumable; adding an unbounded download loop here
+        # is how a run dies 8 minutes short of publishing (rules doc §14d).
+        reconciled = _reconcile_vod_urls(config)["recovered"]
 
         # Download only pages we don't already have cached.
         downloaded = 0
@@ -682,8 +716,8 @@ def cmd_update(args) -> dict:
                 logger.warning("update_discover_download_failed", url=url)
         summary["steps"]["discover"] = {
             "recent_urls": len(recent), "new_in_master": len(new_urls),
-            "downloaded": downloaded, "complete": not incomplete,
-            "incomplete_months": incomplete,
+            "downloaded": downloaded, "reconciled": reconciled,
+            "complete": not incomplete, "incomplete_months": incomplete,
         }
         logger.info("cmd_update_discover_complete", run_id=run_id, **summary["steps"]["discover"])
 

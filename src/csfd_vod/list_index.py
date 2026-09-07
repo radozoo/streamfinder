@@ -34,11 +34,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Optional
 
 from csfd_vod.logger import get_logger
+from csfd_vod.transformation.ids import csfd_id
 from csfd_vod.transformation.list_parser import VODListParser
 
 logger = get_logger(__name__)
@@ -206,3 +208,41 @@ class ListIndex:
             "reason": reason or "incremental",
         }
         return pages, stats
+
+# A film/serial/season/episode overview page — the only shape the harvest keeps on
+# the scrape queue. Mirrors VODScraper._TITLE_OVERVIEW_RE.
+_OVERVIEW_RE = re.compile(r"^https://www\.csfd\.cz/film/\d+[^/]*/(?:\d+[^/]*/)?prehled/$")
+
+
+def overview_urls(pages: dict[str, list[dict]], known: set[str] | None = None) -> list[str]:
+    """Title URLs the cached listings name that `known` does not already cover.
+
+    `vod_urls.json` is written from what a harvest saw during that run, and a URL that
+    fell out between the fetch and the file is gone for good — 791 had leaked out by
+    2026-09-07, 166 of them titles the catalog did not have at all. This is what puts
+    them back, and it reads the index for the same reason everything else here does:
+    re-parsing the 728 MB of listing HTML to answer the question took 85 seconds on
+    every scrape and every nightly run, against 0.05 s for the index that already
+    holds the answer.
+
+    **`known` is compared by csfd_id, not by URL, and that is the whole subtlety.**
+    ČSFD serves the same title under more than one slug — Czech and Slovak names side
+    by side (`612768-greyhound-bitva-o-atlantik` and `-bitka-o-atlantik`, `hluboka-`
+    and `hlboka-voda`) — and identity is the id, never the slug (rules doc §11). A
+    URL-only comparison called every one of those a missing title: the first run
+    recovered 625 such variants, scraping them created 62 duplicate rows, and because
+    `dedupe_titles.py` prunes the losing URL from vod_urls.json, the next reconcile
+    would have added it straight back. Ping-pong, forever, one scrape per night.
+    """
+    known_ids = {csfd_id(u) for u in (known or ())}
+    out: dict[int, str] = {}
+    for entries in pages.values():
+        for entry in entries:
+            url = entry.get("film_url")
+            if not url or not _OVERVIEW_RE.match(url):
+                continue
+            cid = csfd_id(url)
+            if cid is None or cid in known_ids:
+                continue
+            out.setdefault(cid, url)   # one slug per id, whichever the index names first
+    return sorted(out.values())

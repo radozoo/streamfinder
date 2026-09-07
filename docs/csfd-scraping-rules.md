@@ -433,3 +433,53 @@ release.
 the file on `;` before it strips comment lines, so either character in prose cuts a
 statement in half and the whole load fails with a syntax error pointing at prose.
 Put the reasoning in `db/migrations/` instead.
+
+## 16. `vod_urls.json` leaks — reconcile it against the listings you already have
+
+The master URL list is built from what a harvest saw **during that run**. Whatever
+fell out between extracting a URL and writing the file was gone for good, because
+nothing ever read the cached listing pages back. On 2026-09-07 the gap was **791
+URLs present in cached listings but absent from `vod_urls.json`**, spread over 143
+pages from 2017 to 2026 and across both listing sources — a steady leak, not one
+broken run. **166 of them were titles the catalog did not have at all** (Antarktída's
+episodes 1–6, half of Control Z, Pushpavalli), and they were invisible: a URL missing
+from the master list is never scraped, never parsed and never in the catalog, however
+many times the pipeline runs.
+
+Note what it was **not**: not slug drift (§11) — none of the 166 ids were in
+`vod_urls.json` under any slug — and not a filter, since all 166 pass
+`_is_title_overview_url` today. The pages on disk hold the URLs. Nothing read them.
+
+- `list_index.overview_urls()` reads the **listing index**, not the HTML, and keeps
+  only overview-page URLs — the one shape the scrape queue accepts. Recovering a
+  review page or a `/vod/` facet would put junk on that queue forever, and nothing
+  downstream removes it.
+- **Read the index, not the pages.** The first version re-parsed the cached HTML with
+  the harvest's own selector. It worked, and it cost **85 seconds** on every scrape
+  and every nightly run, re-reading the 728 MB `list_index.py` exists to avoid — for
+  an answer the index already holds in 0.05 s. It also recovered 625 URLs the index
+  does not: variant slugs for titles already in the catalog, which is queue bloat,
+  not coverage. The index covers all 166 real gaps.
+- **Compare by `csfd_id`, never by URL — or you build a ping-pong.** ČSFD serves the
+  same title under several slugs, Czech and Slovak side by side
+  (`612768-greyhound-bitva-o-atlantik` and `-bitka-o-atlantik`, `hluboka-` and
+  `hlboka-voda`). A URL-level comparison calls each variant a missing title: the
+  first run here recovered 625 of them, scraping them created **62 duplicate rows**,
+  and since `dedupe_titles.py` prunes the losing slug from `vod_urls.json` (§11), the
+  next reconcile would have added it straight back — one wasted scrape per night,
+  forever. Measured after the cleanup: the id-aware version recovers 0, the URL-based
+  one recovers exactly the 60 rows dedupe had just removed.
+- It costs **no network**, and callers union rather than replace, so it cannot make
+  the list worse. Run it before anything decides what to download: `cmd_scrape` does
+  it at its head, and `update`'s discover does it every night.
+- **Discover only records them; it does not download them.** Draining a backlog is
+  `csfd scrape`'s job — that loop is bounded by `--limit` and resumable. An unbounded
+  download loop inside discover is how a run dies 8 minutes short of publishing
+  (§14d).
+- All merging into `vod_urls.json` goes through `_merge_vod_urls`. There were three
+  hand-rolled copies of those four lines, which is how a fourth source ends up
+  merging subtly differently from the other three.
+- Gate: `check_completeness.py` asserts every overview URL in a cached listing is in
+  `vod_urls.json`. Like §15, the invariant is the gate — a canary list only catches
+  the holes someone already found.
+
