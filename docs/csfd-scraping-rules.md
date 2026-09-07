@@ -93,9 +93,14 @@ month before an update run — those listings still change.
 - `root_id` = first `/film/{id}` segment; `csfd_id` = last id before `/prehled`.
   `is_toplevel = (root_id == csfd_id)`.
 - Segment regex that actually works (slug sits between id and slash, so a naive
-  `(\d+)/(\d+)` never matches): `re.findall(r"/(\d+)-[^/]*(?=/)", url)` → first =
-  root, last = csfd. The trailing lookahead `(?=/)` is required or it only matches
-  the first segment.
+  `(\d+)/(\d+)` never matches): `r"/(\d+)(?:-[^/]*)?(?=/)"` → first = root, last =
+  csfd. The trailing lookahead `(?=/)` is required or it only matches the first
+  segment, and the slug must be **optional** — a title whose name has no
+  alphanumerics slugifies to nothing (`/film/17338/`, the film "$"), and requiring
+  `-slug` left those rows with no hierarchy ids at all.
+- One definition, in `transformation/ids.py` (`segment_ids` / `csfd_id` / `root_id`).
+  The parser and the VOD-event loader must identify a URL identically or events
+  attach to the wrong title.
 - **Katalóg shows works only** (`is_toplevel`); episodes/seasons roll up under the
   serial. **Kalendár shows release events** (any level). A missing root referenced
   by children is backfilled by `scripts/backfill_missing_roots.py` /
@@ -371,3 +376,60 @@ parse, enrich and export get a turn. On 2026-09-02 the 08:00 run scraped perfect
 `incomplete_months: 0`, zero goto timeouts, nav/title 1.31 — and was still killed 8
 minutes short of publishing. If a run has to be cut, cut `--refresh-budget` (ratings
 mature a day later, nobody notices) rather than the wall it dies at.
+
+## 15. A release is title × date × platform — one `vod_date` cannot hold it
+
+`fact_titles.vod_date` is a single column, but ČSFD lists a title's arrival more than
+once: a running serial's **root** reappears every week a new episode drops (Colisión
+on 7., 14., 21. and 28. 9.), and a film reappears when it reaches a second platform
+years later. Whichever date landed in that column, the rest were invisible to the
+Kalendár — **3,977 (day, title) releases across 1,137 days, 258 of the last 365**.
+
+Which one won was not even "first" or "last". `merge_list_metadata` is first-wins over
+listing files sorted by filename, and ČSFD orders a month's pages **newest-date-first**,
+so the winner was the *newest date in the oldest month*. Vigil's BBC iPlayer return on
+2026-09-06 lost to a 2023 listing; Colisión's 2026-09-07 premiere lost to its own
+2026-09-28 episode. The loader's `COALESCE` then made that permanent.
+
+**The rules that came out of it:**
+
+- Release events live in `csfd_vod.fact_vod_events` (`csfd_id`, `vod_date`,
+  `platform`), loaded by `PostgresLoader.load_vod_events` from the listing index.
+- **Keyed on `csfd_id`, with no FK to `fact_titles`.** Not `url_id` — that carries the
+  slug and slugs drift (§11). No FK, because an event exists whether or not the
+  title's own page has been scraped: `LEFT JOIN fact_titles USING (csfd_id) WHERE
+  title_id IS NULL` currently finds 157 ČSFD ids with 174 events and no row at all.
+- **The platform belongs on the event, not on the title.** Of 3,409 multi-release
+  titles, **2,937 (86%) change platform between releases** — Vigil in 2023 was not
+  BBC iPlayer. The Kalendár filters on platform, so a per-title union would surface
+  days on which that platform released nothing.
+- **Loaded from the whole index on every run, not from what parsed.** An event belongs
+  to the listing, not to the title's own page, and `parse` only re-reads pages whose
+  cached file moved. A serial nobody has re-scraped since 2023 still has to get
+  today's event, so the load sits *before* the "nothing to parse" exit in `cmd_parse`.
+- **Append-only.** A listing page that came back as a bot challenge is left OUT of the
+  index rather than stored as empty, so delete-then-insert would drop every event it
+  carried and nothing would put them back — the same failure the `dim_vods` guard
+  exists to prevent (§5, §6). An absent page may add nothing; it may not erase.
+  `csfd events --rebuild` truncates first, for the one thing union cannot do (ČSFD
+  corrected a date) — run it only after a harvest that reported `complete`.
+- **The export carries `vod_events` only when it differs from `vod_date`** (3,396
+  titles). The condition is "differs", not "more than one": four titles carry a
+  listing date while their own `vod_date` is NULL, and a `> 1` test left them off the
+  calendar entirely. `vod_date` itself is untouched — Katalóg, home rails and sorting
+  still read it.
+- The gate is the invariant, not a canary list: `check_completeness.py` asserts that
+  **every dated release in `cache/list_index.json`, for a title the export ships, can
+  be rendered on that day**. A list of names only ever catches the holes someone has
+  already found.
+
+**Still open**, deliberately: `vod_date` keeps its old meaning rather than becoming
+`MIN(event)` with a `last_vod_date` alongside — that moves 3,409 titles in the Katalóg
+sort and in Novinky, so it needs a before/after diff, not a guess. The Kalendár card
+likewise still shows the title's platform union rather than the platform of *that*
+release.
+
+**No semicolons or apostrophes in `db/schema.sql` comments.** `create_schema` splits
+the file on `;` before it strips comment lines, so either character in prose cuts a
+statement in half and the whole load fails with a syntax error pointing at prose.
+Put the reasoning in `db/migrations/` instead.

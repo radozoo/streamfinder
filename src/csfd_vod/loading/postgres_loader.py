@@ -13,11 +13,42 @@ from sqlalchemy import (
 from sqlalchemy.pool import QueuePool
 from sqlalchemy.orm import sessionmaker, Session
 
+from csfd_vod.transformation.ids import csfd_id
 from csfd_vod.transformation.models import VODTitle
 from csfd_vod.logger import get_logger
 
 
 logger = get_logger(__name__)
+
+
+def event_rows(pages: Dict[str, List[Dict[str, Any]]]) -> tuple[List[Dict[str, Any]], int]:
+    """Listing entries → VOD event rows. Pure, so it can be tested without a database.
+
+    Returns (rows, skipped). An entry is skipped when it carries no date — that is the
+    normal shape of the undated catalog entries a platform browse listing produces
+    (roughly 31k of the 68k entries), not a failure.
+    """
+    rows: dict[tuple, Dict[str, Any]] = {}
+    skipped = 0
+    for entries in pages.values():
+        for entry in entries:
+            cid = csfd_id(entry.get("film_url", ""))
+            vod_date = entry.get("vod_date")
+            if cid is None or not vod_date:
+                skipped += 1
+                continue
+            # One row per platform. An entry naming none still gets a row: the date
+            # is the fact the calendar needs, the platform is the detail.
+            for platform in (entry.get("platforms") or [""]):
+                key = (cid, str(vod_date), platform or "")
+                rows.setdefault(key, {
+                    "csfd_id": cid,
+                    "vod_date": str(vod_date),
+                    "platform": platform or "",
+                    "distributor": entry.get("distributor"),
+                    "list_type": entry.get("list_type"),
+                })
+    return list(rows.values()), skipped
 
 
 class PostgresLoader:
@@ -439,6 +470,49 @@ class PostgresLoader:
         except Exception as e:
             logger.error("dimension_upsert_failed", title_id=title_id, error=str(e))
             raise
+
+    def load_vod_events(self, pages: Dict[str, List[Dict[str, Any]]], rebuild: bool = False) -> Dict[str, Any]:
+        """Load every VOD release event the cached listings know about.
+
+        A release event is title × date × platform. `fact_titles.vod_date` holds one
+        of them, chosen by merge_list_metadata's first-wins scan — which, because
+        ČSFD orders a month's listing pages newest-date-first, resolves to the newest
+        date in the OLDEST month. Everything else was invisible to the Kalendár: 3,977
+        (day, title) events, 258 of the last 365 days short by at least one title.
+
+        Deliberately NOT driven by the parse. `parse` only re-reads pages whose cached
+        file moved, and only merges into the titles it re-read; an event belongs to
+        the listing, not to the title's own page, so this walks the WHOLE index every
+        run. A title nobody has re-scraped since 2023 still gets today's event.
+
+        Append-only, by design. A listing page that came back as a bot challenge is
+        left OUT of the index rather than stored as empty (see list_index.py), so a
+        delete-then-insert would drop every event that page carried and nothing would
+        put them back — the same failure the dim_vods guard exists to prevent. An
+        absent page may add nothing; it may not erase. `rebuild=True` truncates first,
+        for the one case union cannot handle (ČSFD corrected a date); run it only
+        against an index built from a harvest that reported `complete`.
+        """
+        batch, skipped = event_rows(pages)
+
+        sql = text("""
+            INSERT INTO csfd_vod.fact_vod_events
+                (csfd_id, vod_date, platform, distributor, list_type)
+            VALUES (:csfd_id, :vod_date, :platform, :distributor, :list_type)
+            ON CONFLICT (csfd_id, vod_date, platform) DO NOTHING
+        """)
+        with self.engine.begin() as conn:
+            if rebuild:
+                conn.execute(text("TRUNCATE csfd_vod.fact_vod_events"))
+            before = conn.execute(text("SELECT count(*) FROM csfd_vod.fact_vod_events")).scalar_one()
+            for i in range(0, len(batch), 5000):
+                conn.execute(sql, batch[i:i + 5000])
+            after = conn.execute(text("SELECT count(*) FROM csfd_vod.fact_vod_events")).scalar_one()
+
+        stats = {"events": len(batch), "inserted": after - before, "total": after,
+                 "skipped": skipped, "rebuilt": rebuild}
+        logger.info("vod_events_loaded", **stats)
+        return stats
 
     def select_refresh_urls(self, max_age_days: int, limit: int) -> List[str]:
         """URLs of 'hot' titles due for a rating/votes refresh.

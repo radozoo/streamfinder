@@ -4,6 +4,7 @@
 	import type { TitleIndex, CrewEntry, DimEntry } from '$lib/types';
 	import PosterCard from '$lib/components/PosterCard.svelte';
 	import { typeRuns } from '$lib/type-runs';
+	import { releaseDates, hasRelease } from '$lib/releases';
 	import FilterBar from '$lib/components/FilterBar.svelte';
 	import MobileFilterSheet from '$lib/components/MobileFilterSheet.svelte';
 	import ActiveFilters from '$lib/components/ActiveFilters.svelte';
@@ -197,10 +198,14 @@
 	let titlesInRange = $derived.by(() => {
 		const map = new Map<string, TitleIndex[]>();
 		for (const t of data.titles) {
-			if (!t.vod_date || t.vod_date < minDate || t.vod_date > TODAY) continue;
-			const arr = map.get(t.vod_date) ?? [];
-			arr.push(t);
-			map.set(t.vod_date, arr);
+			// Every release, not just `vod_date` — a running serial lands here once a
+			// week and a film again when it reaches a second platform. See lib/releases.ts.
+			for (const date of releaseDates(t)) {
+				if (date < minDate || date > TODAY) continue;
+				const arr = map.get(date) ?? [];
+				arr.push(t);
+				map.set(date, arr);
+			}
 		}
 		return map;
 	});
@@ -286,10 +291,12 @@
 	let upcomingGroups = $derived.by((): DayGroup[] => {
 		const map = new Map<string, TitleIndex[]>();
 		for (const t of data.titles) {
-			if (!t.vod_date || t.vod_date <= TODAY) continue;
-			const arr = map.get(t.vod_date) ?? [];
-			arr.push(t);
-			map.set(t.vod_date, arr);
+			for (const date of releaseDates(t)) {
+				if (date <= TODAY) continue;
+				const arr = map.get(date) ?? [];
+				arr.push(t);
+				map.set(date, arr);
+			}
 		}
 		return [...map.keys()]
 			.sort((a, b) => b.localeCompare(a)) // descending — latest at top, tomorrow nearest today
@@ -321,15 +328,15 @@
 
 	// ── Filter dimensions + helpers (identical to Katalog) ────────────────────
 	// Flat filtered set (calendar titles) drives the pill availability indicators.
-	let filteredTitles = $derived(data.titles.filter((t) => t.vod_date && passesFilters(t)));
+	let filteredTitles = $derived(data.titles.filter((t) => hasRelease(t) && passesFilters(t)));
 
 	// Facet availability: each computed against every filter EXCEPT its own
 	// dimension (over calendar titles), so a picked value never greys out its
 	// siblings — OR within a dimension, matching Katalog.
-	let genreBase = $derived.by(() => data.titles.filter((t) => t.vod_date && passes(t, filterConfig, 'genre')));
-	let platformBase = $derived.by(() => data.titles.filter((t) => t.vod_date && passes(t, filterConfig, 'platform')));
-	let countryBase = $derived.by(() => data.titles.filter((t) => t.vod_date && passes(t, filterConfig, 'country')));
-	let tagBase = $derived.by(() => data.titles.filter((t) => t.vod_date && passes(t, filterConfig, 'tag')));
+	let genreBase = $derived.by(() => data.titles.filter((t) => hasRelease(t) && passes(t, filterConfig, 'genre')));
+	let platformBase = $derived.by(() => data.titles.filter((t) => hasRelease(t) && passes(t, filterConfig, 'platform')));
+	let countryBase = $derived.by(() => data.titles.filter((t) => hasRelease(t) && passes(t, filterConfig, 'country')));
+	let tagBase = $derived.by(() => data.titles.filter((t) => hasRelease(t) && passes(t, filterConfig, 'tag')));
 
 	let availableGenres = $derived(
 		data.dimensions.genres.map((g) => ({ ...g, hit: genreBase.some((t) => t.genres.includes(g.name)) }))

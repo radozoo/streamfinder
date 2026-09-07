@@ -19,6 +19,18 @@ export interface TitleIndex {
 	runtime_min: number | null;
 	title_type: string | null;
 	vod_date: string | null;
+	/**
+	 * Every VOD release of this title as [date, platform], oldest first — present
+	 * only when it says something `vod_date` does not, which is 3,396 titles. ČSFD
+	 * lists a running serial again each week a new episode drops, and a film again
+	 * when it reaches a second platform, but `vod_date` holds one of those, so the
+	 * Kalendár used to show it on a single day. Platform is per-event because 86% of
+	 * multi-release titles change platform between releases.
+	 *
+	 * Read it via `releaseDates()` / `releasesOf()` in lib/releases.ts rather than
+	 * directly, so the single-release fallback to `vod_date` stays in one place.
+	 */
+	vod_events?: [string, string | null][];
 	poster: string | null;
 	genres: string[];
 	tags: string[];

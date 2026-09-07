@@ -12,6 +12,7 @@ harvest    python3 -m csfd_vod.main harvest --from-year 2015   # collect /vod UR
 harvest-platforms  python3 -m csfd_vod.main harvest-platforms  # + undated catalog titles (see below)
 scrape     python3 -m csfd_vod.main scrape                     # download title pages → cache/html/
 parse      python3 -m csfd_vod.main parse                      # parse ALL cached HTML → Postgres (idempotent)
+events     python3 -m csfd_vod.main events [--rebuild]         # rebuild fact_vod_events (parse already unions them in)
 enrich     python3 -m csfd_vod.main enrich                     # TMDB posters/trailers (needs TMDB_API_KEY)
 streamfinder  python3 -m csfd_vod.main streamfinder            # export streamfinder/static/data/*.json
 update     python3 -m csfd_vod.main update                     # incremental refresh (see below)
@@ -77,6 +78,15 @@ Full detail + code pointers in **`docs/csfd-scraping-rules.md`**. The short list
   reported missing. See rules doc §1b + update-architecture.md.
 - **Hierarchy:** `root_id` = first `/film/{id}` segment, `csfd_id` = last;
   `is_toplevel = root_id == csfd_id`. Katalóg = works, Kalendár = release events.
+  One definition of that, in `transformation/ids.py` — the slug is optional
+  (`/film/17338/`, the film "$").
+- **A release is title × date × platform, and `vod_date` holds one of them.** ČSFD
+  relists a running serial's root every week and a film on each new platform, so the
+  single column hid 3,977 (day, title) releases — 258 of the last 365 days. They live
+  in `fact_vod_events` now, keyed on `csfd_id`, loaded append-only from the WHOLE
+  listing index on every run (not from what parsed — the event belongs to the
+  listing, not to the title's page). Platform sits on the event because 86% of
+  multi-release titles change platform between releases. Rules doc §15.
 - **Slug drift → duplicates.** ČSFD renames slugs over time (`…-episode-5/` →
   `…-pamet/`, `…-the-miniature-wife/` → `…-miniaturni-manzelka/`) while the id
   stays. Since `url_id` carries the slug, a rename INSERTs a *second* row for the

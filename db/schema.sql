@@ -217,3 +217,28 @@ CREATE TABLE IF NOT EXISTS csfd_vod.pipeline_runs (
     metrics JSONB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Fact table: VOD release events (2026-09-07, migration 008)
+--
+-- A release event is title × date × platform, but fact_titles.vod_date can hold only
+-- one of them, so the Kalendár was short 3,977 (day, title) events. Keyed on csfd_id
+-- rather than url_id, because slugs drift, and with no FK, because an event may
+-- precede the title own page. Platform lives on the event because 86% of
+-- multi-date titles change platform between dates.
+-- NOTE keep semicolons and apostrophes out of comments in this file. create_schema
+-- splits it on the semicolon before it strips comment lines, so either character in
+-- prose cuts a statement in half. Full rationale lives in the migration instead.
+-- Full rationale: db/migrations/008_vod_events.sql
+CREATE TABLE IF NOT EXISTS csfd_vod.fact_vod_events (
+    event_id    SERIAL PRIMARY KEY,
+    csfd_id     INTEGER      NOT NULL,
+    vod_date    DATE         NOT NULL,
+    platform    VARCHAR(100) NOT NULL DEFAULT '',
+    distributor VARCHAR(200),
+    list_type   VARCHAR(20),
+    first_seen  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (csfd_id, vod_date, platform)
+);
+
+CREATE INDEX IF NOT EXISTS idx_vod_event_date ON csfd_vod.fact_vod_events(vod_date);
+CREATE INDEX IF NOT EXISTS idx_vod_event_csfd ON csfd_vod.fact_vod_events(csfd_id);

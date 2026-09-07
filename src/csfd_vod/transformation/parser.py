@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from bs4 import BeautifulSoup
 
+from csfd_vod.transformation.ids import segment_ids
 from csfd_vod.transformation.models import VODTitle, ParsedTitle
 from csfd_vod.transformation.text import clean_text, split_services
 from csfd_vod.logger import get_logger
@@ -288,17 +289,13 @@ class VODTitleParser:
                 data["title_type"] = type_text.lower()
 
         # --- Hierarchy: root_id / csfd_id from URL segments ---
-        # /film/{ROOT}-slug/{CHILD}-slug/prehled/ → child (episode/season under a serial)
-        # /film/{ID}-slug/prehled/                → top-level work (root_id == csfd_id)
-        # Each "/{id}-slug/" segment is an id: first = root serial, last = the entity
-        # itself. (A plain "/film/(\d+)" would only see the first segment.)
-        # The slug is optional: a title whose name has no alphanumerics slugifies to
-        # nothing, giving a bare "/film/17338/" — the film "$". Requiring "-slug"
-        # left those rows with no hierarchy ids at all.
-        seg_ids = re.findall(r"/(\d+)(?:-[^/]*)?(?=/)", url)
+        # See transformation/ids.py for what a "/{id}-slug/" chain means and for the
+        # two traps (episodes collapsing onto their serial, slugless URLs). Shared
+        # with the VOD-event loader, which must identify a URL exactly the same way.
+        seg_ids = segment_ids(url)
         if seg_ids:
-            data["root_id"] = int(seg_ids[0])
-            data["csfd_id"] = int(seg_ids[-1])
+            data["root_id"] = seg_ids[0]
+            data["csfd_id"] = seg_ids[-1]
             is_child = data["root_id"] != data["csfd_id"]
             if is_child and not data.get("title_type"):
                 data["title_type"] = "epizoda"

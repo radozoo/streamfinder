@@ -46,6 +46,16 @@ def _make_scraper(config, selectors) -> VODScraper:
     )
 
 
+def _load_events_to_db(list_pages, config, rebuild=False):
+    """Load VOD release events from the listing index. Independent of what parsed."""
+    loader = PostgresLoader(config.database.connection_string)
+    try:
+        loader.create_schema()
+        return loader.load_vod_events(list_pages, rebuild=rebuild)
+    finally:
+        loader.close()
+
+
 def _load_to_db(parsed_titles, config, run_id):
     loader = PostgresLoader(config.database.connection_string)
     try:
@@ -236,6 +246,33 @@ def cmd_scrape(args) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Command: events — rebuild VOD release events from the cached listings
+# ---------------------------------------------------------------------------
+
+def cmd_events(args) -> dict:
+    """Reload fact_vod_events from the listing index.
+
+    `parse` already unions events in on every run, so this exists for the one thing
+    a union cannot do: drop an event ČSFD has since corrected. It truncates first,
+    which means the index must be complete — run it only after a harvest that
+    reported `complete`, never on top of a run whose listing fetches were challenged.
+    """
+    run_id = str(uuid.uuid4())
+    config = load_config_from_env()
+    list_html_dir = Path(config.cache_dir) / "vod_lists"
+    if not list_html_dir.exists():
+        logger.error("cmd_events_failed", run_id=run_id, reason="no_listings")
+        return {"success": False, "run_id": run_id, "reason": "no cached listings — run `csfd harvest` first"}
+
+    index = ListIndex(config.cache_dir, list_html_dir)
+    list_pages, list_stats = index.load(force_full=args.full)
+    logger.info("stage_list_index_ready", run_id=run_id, **list_stats)
+    stats = _load_events_to_db(list_pages, config, rebuild=args.rebuild)
+    logger.info("cmd_events_complete", run_id=run_id, **stats)
+    return {"success": True, "run_id": run_id, **stats}
+
+
+# ---------------------------------------------------------------------------
 # Command: parse — parse cached HTML and load to DB
 # ---------------------------------------------------------------------------
 
@@ -272,6 +309,20 @@ def cmd_parse(args) -> dict:
     logger.info("stage_parse_start", run_id=run_id, count=len(to_parse), total=len(urls),
                 full=plan["full"], skipped=plan["skipped"], reason=plan["reason"])
 
+    # The listing index, read once and used twice: for the release events below and
+    # for the per-title merge further down. Built BEFORE the "nothing to parse" exit
+    # because events do not come from title pages — a listing that gained a date for
+    # a title nobody re-scraped must still land, and that is the normal case for a
+    # running serial. See loading/postgres_loader.py::load_vod_events.
+    list_pages: dict = {}
+    if list_html_dir.exists():
+        index = ListIndex(config.cache_dir, list_html_dir)
+        list_pages, list_stats = index.load(force_full=getattr(args, "full", False))
+        logger.info("stage_list_index_ready", run_id=run_id, **list_stats)
+        if not args.dry_run:
+            event_stats = _load_events_to_db(list_pages, config)
+            logger.info("stage_vod_events_complete", run_id=run_id, **event_stats)
+
     if not to_parse:
         # Nothing moved since the last load. The DB already holds the answer.
         ParseState(config.cache_dir).write(plan["fingerprint"], plan["started_at"])
@@ -307,10 +358,7 @@ def cmd_parse(args) -> dict:
     # title's vod_date may come from one downloaded years ago — but they are read
     # from the cached index instead of re-parsed, which is the difference between
     # 135 seconds of BeautifulSoup and a fraction of one. See list_index.py.
-    if list_html_dir.exists():
-        index = ListIndex(config.cache_dir, list_html_dir)
-        list_pages, list_stats = index.load(force_full=getattr(args, "full", False))
-        logger.info("stage_list_index_ready", run_id=run_id, **list_stats)
+    if list_pages:
         matched = merge_list_metadata(parsed_titles, list_pages)
         logger.info("stage_list_parse_complete", run_id=run_id, matched=matched)
 
@@ -767,6 +815,18 @@ def main():
                            help="Max NEW (uncached) pages to fetch this run, top-level works "
                                 "prioritised over episodes/seasons (default: no limit)")
 
+    # -- events --
+    p_events = subparsers.add_parser(
+        "events", help="Rebuild VOD release events (fact_vod_events) from cached listings")
+    p_events.add_argument(
+        "--rebuild", action="store_true",
+        help="TRUNCATE first instead of unioning. Drops events ČSFD has corrected — "
+             "and every event a listing page that failed to fetch would have carried, "
+             "so run it only after a harvest that reported `complete`.")
+    p_events.add_argument(
+        "--full", action="store_true",
+        help="Re-parse every cached listing page instead of trusting the index cache.")
+
     # -- parse --
     p_parse = subparsers.add_parser("parse", help="Parse cached HTML and load to database")
     p_parse.add_argument("--dry-run", action="store_true", help="Parse but don't write to database")
@@ -844,6 +904,8 @@ def _dispatch(args) -> dict:
         result = cmd_scrape(args)
     elif args.command == "parse":
         result = cmd_parse(args)
+    elif args.command == "events":
+        result = cmd_events(args)
     elif args.command == "run":
         result = run_pipeline(vod_page_url=args.url, dry_run=args.dry_run)
     elif args.command == "dashboard":

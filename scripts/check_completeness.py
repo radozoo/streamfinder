@@ -27,6 +27,7 @@ Usage:  python3 scripts/check_completeness.py
 """
 import argparse
 import json
+import re
 import sys
 import unicodedata
 from collections import Counter
@@ -62,6 +63,12 @@ SEARCH_CANARIES = {
 MIN_TOPLEVEL_WORKS = 5000
 
 DEFAULT_INDEX = Path("streamfinder/static/data/titles_index.json")
+DEFAULT_LIST_INDEX = Path("cache/list_index.json")
+
+# Each "/{id}-slug/" segment of a ČSFD URL is an id, and the LAST one is the entity
+# itself. Mirrors transformation/ids.py — a plain "/film/(\d+)" would see only the
+# first segment and collapse every episode onto its serial.
+SEGMENT_ID_RE = re.compile(r"/(\d+)(?:-[^/]*)?(?=/)")
 
 
 def _duplicate_problems(titles: list) -> list[str]:
@@ -148,9 +155,58 @@ def _facet_problems(titles: list, dimensions_path: Path) -> list[str]:
     return problems[:5] + ([f"...and {len(problems) - 5} more"] if len(problems) > 5 else [])
 
 
+def _calendar_problems(titles: list, list_index_path: Path) -> list[str]:
+    """Every dated release in the cached listings must reach the calendar.
+
+    The Kalendár groups titles by date, but `vod_date` is one field and ČSFD lists a
+    running serial again every week and a film again on each new platform. Whichever
+    date won, the rest were invisible: 3,977 (day, title) releases missing across
+    1,137 days, 258 of the last 365. Nothing looked broken — the days were simply
+    quieter than ČSFD's own listing.
+
+    So the gate is the invariant, not a handful of names: every (csfd_id, date) the
+    listing index knows about, for a title the export actually ships, must be one the
+    index can render on that day. A canary list can only catch the holes someone
+    already found.
+    """
+    if not list_index_path.exists():
+        return [f"list index not found: {list_index_path} — run `csfd parse` first"]
+    index = json.loads(list_index_path.read_text(encoding="utf-8"))
+
+    shipped: dict[int, set] = {}
+    for t in titles:
+        csfd_id = t.get("csfd_id")
+        if csfd_id is None:
+            continue
+        events = t.get("vod_events")
+        dates = {d for d, _ in events} if events else ({t["vod_date"]} if t.get("vod_date") else set())
+        shipped.setdefault(csfd_id, set()).update(dates)
+
+    missing = set()
+    for page in index.get("pages", {}).values():
+        for entry in page.get("entries", []):
+            date = entry.get("vod_date")
+            if not date:
+                continue
+            seg_ids = SEGMENT_ID_RE.findall(entry.get("film_url", ""))
+            if not seg_ids:
+                continue
+            csfd_id = int(seg_ids[-1])
+            if csfd_id not in shipped:
+                continue  # a title we have not scraped yet — a different gap
+            if date not in shipped[csfd_id]:
+                # A (title, date) pair, not a listing row — the same release is listed
+                # on more than one page and must not be counted twice.
+                missing.add((csfd_id, date))
+    problems = [f"[{cid}] released {d} but the calendar cannot show it"
+                for cid, d in sorted(missing, key=lambda m: (m[1], m[0]))]
+    return problems[:5] + ([f"...and {len(problems) - 5} more"] if len(problems) > 5 else [])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--index", type=Path, default=DEFAULT_INDEX)
+    ap.add_argument("--list-index", type=Path, default=DEFAULT_LIST_INDEX)
     args = ap.parse_args()
 
     if not args.index.exists():
@@ -189,6 +245,14 @@ def main() -> int:
         ok = False
     else:
         print("ok  : every facet count matches the index it filters")
+
+    cal_problems = _calendar_problems(titles, args.list_index)
+    if cal_problems:
+        for p in cal_problems:
+            print(f"FAIL: {p}")
+        ok = False
+    else:
+        print("ok  : every dated release in the listings can reach the calendar")
 
     dup_problems = _duplicate_problems(titles)
     if dup_problems:

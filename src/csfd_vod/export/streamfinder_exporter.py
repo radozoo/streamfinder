@@ -124,6 +124,13 @@ _PLATFORM_PRIORITY = {
 }
 
 
+def _differs(events: list[list], vod_date: str | None) -> bool:
+    """Do these release events say anything `vod_date` alone does not?"""
+    if not events:
+        return False
+    return {d for d, _ in events} != ({vod_date} if vod_date else set())
+
+
 def _sort_platforms(names: list[str]) -> list[str]:
     """De-dup and order platforms so the primary service leads."""
     seen: list[str] = []
@@ -240,6 +247,7 @@ class StreamfinderExporter:
             composers_map = self._load_dim(session, "dim_composers", "composer")
             reviews_map = self._load_reviews(session)
             vods_map = self._load_vods(session)   # {title_id: [{platform, url}]}
+            events_map = self._load_events(session)  # {csfd_id: [[date, platform]]}
             tmdb_map = self._load_tmdb(session)   # {title_id: {poster, backdrop, trailer}}
             kviff_ids = self._load_kviff_flags(session)
 
@@ -268,7 +276,7 @@ class StreamfinderExporter:
             # titles_index.json — lightweight, used for grid/calendar
             index = self._build_index(
                 titles, genres_map, tags_map, countries_map, vods_map, tmdb_map,
-                title_crew_map, root_title_id, serial_agg, kviff_ids,
+                title_crew_map, root_title_id, serial_agg, kviff_ids, events_map,
             )
             _write(out / "titles_index.json", index)
 
@@ -445,6 +453,23 @@ class StreamfinderExporter:
             seen[title_id].add(platform)
             result.setdefault(title_id, []).append({"platform": platform, "url": row[2]})
         return result
+
+    def _load_events(self, session: Session) -> dict[int, list[list]]:
+        """{csfd_id: [[date, platform], ...]} — every VOD release, oldest first.
+
+        Keyed on csfd_id rather than title_id because that is what fact_vod_events
+        stores: an event belongs to a ČSFD id, which survives the slug renames that
+        give a title a second url_id. The index consumer joins on csfd_id too.
+        """
+        sql = text("""
+            SELECT csfd_id, vod_date, platform
+            FROM csfd_vod.fact_vod_events
+            ORDER BY csfd_id, vod_date, platform
+        """)
+        out: dict[int, list[list]] = {}
+        for csfd_id, vod_date, platform in session.execute(sql):
+            out.setdefault(csfd_id, []).append([vod_date.isoformat(), platform or None])
+        return out
 
     def _load_reviews(self, session: Session) -> dict[int, list[dict]]:
         """Load top-3 reviews per title ordered by stars DESC."""
@@ -635,6 +660,7 @@ class StreamfinderExporter:
         root_title_id: dict[int, int],
         serial_agg: dict[int, dict],
         kviff_ids: set[int],
+        events_map: dict[int, list[list]],
     ) -> list[dict]:
         """Lightweight index entry per title for grid/calendar views."""
         root_poster = _root_posters(titles, tmdb_map)
@@ -674,6 +700,7 @@ class StreamfinderExporter:
             # serials hid one their own episodes carry.
             inherited = child_platforms.get(rid, []) if is_toplevel else root_platforms.get(rid, [])
             platforms = _sort_platforms(platforms + inherited)
+            events = events_map.get(t["csfd_id"]) or []
             entry = {
                 "id": tid,
                 "slug": _slug(t["title"], t["year"]),
@@ -685,6 +712,21 @@ class StreamfinderExporter:
                 "runtime_min": t["runtime_min"],
                 "title_type": t["title_type"],
                 "vod_date": t["vod_date"],
+                # Every release, [[date, platform], ...] — carried only when it says
+                # something `vod_date` does not, which is 3,396 titles. `vod_date`
+                # stays what it always was (Katalóg, home rails and sorting read it),
+                # so the ~46k titles with a single release cost nothing extra and the
+                # Kalendár falls back to it. Without this the calendar could show a
+                # title on one day only, and was short 3,977 (day, title) releases
+                # across 258 of the last 365 days. Platform sits on the event because
+                # 86% of multi-release titles change platform between releases, and
+                # the calendar filters on platform.
+                #
+                # The condition is "differs from vod_date", not "more than one": four
+                # titles carry a listing date while their own row's vod_date is NULL
+                # (Prominentky, Kevin Hart: Tvrdý oříšek 2, …), and a >1 test would
+                # keep leaving them off the calendar entirely, as it always had.
+                **({"vod_events": events} if _differs(events, t["vod_date"]) else {}),
                 "poster": poster,
                 "genres": genres_map.get(tid, []),
                 "tags": tags_map.get(tid, []),
