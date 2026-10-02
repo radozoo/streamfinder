@@ -19,6 +19,7 @@
 	import { katalogFilters, EMPTY_PARAMS } from '$lib/filter-params';
 	import { loadCrewIndex, loadCrewTitles, isCrewLoaded } from '$lib/data/crew';
 	import { loadTags, areTagsLoaded } from '$lib/data/tags';
+	import { isPlanned, todayISO } from '$lib/releases';
 
 	let { data }: { data: PageData } = $props();
 
@@ -48,6 +49,14 @@
 	let ratingMin = $state<number>(initial.ratingMin ?? 0);
 	let recencyDays = $state<number>(initial.recency);
 	let sortBy = $state<'rating' | 'year' | 'vod_date' | 'votes'>(initial.sort);
+	let showPlanned = $state<boolean>(initial.planned);
+
+	// Computed once per page view, not per title: 34k Date allocations per keystroke
+	// otherwise, and a set that cannot change mid-visit anyway.
+	const TODAY = todayISO();
+	const plannedIds = new Set(
+		untrack(() => data.titles.filter((t) => t.is_toplevel !== false && isPlanned(t, TODAY)).map((t) => t.id))
+	);
 
 	// ── "Přidáno na VOD" recency presets ─────────────────────────────────────
 	// Mutually exclusive windows → single-select. A work passes if its most recent
@@ -187,10 +196,13 @@
 	}
 
 	// ── Filtered + sorted titles ──────────────────────────────────────────────
+	// Planned titles are not a facet: the toggle only decides whether they join the
+	// result, so it is applied after `passes` — which also gives the toggle an honest
+	// count of how many it would add under the current filters.
+	let matching = $derived(data.titles.filter((t) => passes(t, filterConfig, '')));
+	let plannedCount = $derived(matching.reduce((n, t) => n + (plannedIds.has(t.id) ? 1 : 0), 0));
 	let filtered = $derived.by(() => {
-		const f = filterConfig;
-		return data.titles
-			.filter((t) => passes(t, f, ''))
+		return (showPlanned ? [...matching] : matching.filter((t) => !plannedIds.has(t.id)))
 			.sort((a, b) => {
 				if (sortBy === 'rating') return (b.rating ?? 0) - (a.rating ?? 0);
 				if (sortBy === 'year') return (b.year ?? 0) - (a.year ?? 0);
@@ -236,6 +248,7 @@
 		if (ratingMin > 0) params.set('ratingMin', String(ratingMin));
 		if (recencyDays > 0) params.set('added', String(recencyDays));
 		if (sortBy !== 'vod_date') params.set('sort', sortBy);
+		if (showPlanned) params.set('plan', '1');
 		const str = params.toString();
 		// Three APIs look right here and two are not:
 		//   history.replaceState(null, ...) wipes the router's own history state, so
@@ -402,6 +415,24 @@
 			{filtered.length.toLocaleString('cs-CZ')}
 			{filtered.length === 1 ? 'titul' : filtered.length < 5 ? 'tituly' : 'titulů'}
 		</div>
+		<!-- In the header, not the filter bar: it changes what the count above means,
+		     and the bar is hidden on phones. Hidden when nothing planned matches. -->
+		{#if plannedCount > 0 || showPlanned}
+			<button
+				class="planned-toggle"
+				class:on={showPlanned}
+				type="button"
+				aria-pressed={showPlanned}
+				onclick={() => (showPlanned = !showPlanned)}
+			>
+				<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+					<circle cx="12" cy="12" r="9" />
+					<polyline points="12 7 12 12 15.5 14" />
+				</svg>
+				{showPlanned ? 'Včetně připravovaných' : 'Zobrazit připravované'}
+				<span class="planned-count">{showPlanned ? '' : '+'}{plannedCount}</span>
+			</button>
+		{/if}
 	</div>
 
 	<!-- Search + Sort bar -->
@@ -538,14 +569,63 @@
 <style>
 	.katalog-header {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: baseline;
-		gap: 1rem;
+		gap: 0.5rem 1rem;
 		margin-bottom: 1.25rem;
 	}
 
 	.result-count {
 		color: var(--text-muted);
 		font-size: 0.9rem;
+		white-space: nowrap;
+	}
+
+	/* Same blue as the planned badge on the cards and the Kalendár's upcoming section. */
+	.planned-toggle {
+		margin-left: auto;
+		align-self: center;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font: inherit;
+		font-size: 0.8rem;
+		padding: 0.35rem 0.75rem;
+		border-radius: 999px;
+		background: var(--navy-700);
+		border: 1px solid var(--border);
+		color: var(--text-secondary);
+		cursor: pointer;
+		transition: color 0.15s, border-color 0.15s, background 0.15s;
+		white-space: nowrap;
+	}
+
+	.planned-toggle svg {
+		fill: none;
+		stroke: #6ea8ff;
+		stroke-width: 2.4;
+		stroke-linecap: round;
+	}
+
+	.planned-toggle:hover {
+		color: var(--text-primary);
+		border-color: rgba(110, 168, 255, 0.5);
+	}
+
+	.planned-toggle.on {
+		color: #6ea8ff;
+		border-color: rgba(110, 168, 255, 0.45);
+		background: rgba(110, 168, 255, 0.1);
+	}
+
+	.planned-count {
+		font-size: 0.72rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		padding: 1px 7px;
+		border-radius: 999px;
+		background: rgba(110, 168, 255, 0.16);
+		color: #6ea8ff;
 	}
 
 	.search-bar {
@@ -645,6 +725,11 @@
 	}
 
 	@media (max-width: 640px) {
+		/* Own row under the title, so the count never wraps mid-number. */
+		.planned-toggle {
+			margin-left: 0;
+		}
+
 		.poster-grid {
 			grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
 		}

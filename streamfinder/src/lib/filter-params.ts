@@ -76,7 +76,10 @@ export function katalogFilters(sp: URLSearchParams) {
 	return {
 		...common(sp),
 		sort: (VALID_SORTS.includes(sort as SortKey) ? sort : 'vod_date') as SortKey,
-		recency: recency && VALID_RECENCY.includes(recency) ? recency : 0
+		recency: recency && VALID_RECENCY.includes(recency) ? recency : 0,
+		// Announced-but-unreleased titles are hidden unless asked for: Katalóg answers
+		// "what can I watch", and sorted by VOD date they would otherwise fill the top.
+		planned: sp.get('plan') === '1'
 	};
 }
 

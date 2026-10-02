@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { hasRelease, releaseDates, releasesOf } from './releases';
+import { hasRelease, isPlanned, releaseDates, releasesOf } from './releases';
 import type { TitleIndex } from './types';
 
 /**
@@ -68,5 +68,30 @@ describe('a title released more than once', () => {
 		const orphan = t(null, [['2025-11-15', 'Netflix']]);
 		expect(releaseDates(orphan)).toEqual(['2025-11-15']);
 		expect(hasRelease(orphan)).toBe(true);
+	});
+});
+
+describe('isPlanned — announced, not out yet', () => {
+	const TODAY = '2026-10-02';
+	const p = (over: Partial<TitleIndex>) =>
+		isPlanned({ id: 1, title: 't', vod_date: null, ...over } as TitleIndex, TODAY);
+
+	test('a title whose only date is in the future', () => {
+		expect(p({ vod_date: '2026-10-16' })).toBe(true);
+	});
+
+	test('a running serial whose NEXT episode is in the future is not planned', () => {
+		// vod_date points at the upcoming episode; it has been streaming since June.
+		expect(p({ vod_date: '2026-10-21', first_vod_date: '2026-06-17' })).toBe(false);
+		expect(p({ vod_date: '2026-10-29', vod_events: [['2026-09-24', 'Netflix'], ['2026-10-29', 'Netflix']] })).toBe(false);
+	});
+
+	test('a serial announced with first_vod_date only', () => {
+		expect(p({ vod_date: null, first_vod_date: '2026-10-09' })).toBe(true);
+	});
+
+	test('today counts as released, and an undated title is not planned', () => {
+		expect(p({ vod_date: TODAY })).toBe(false);
+		expect(p({ vod_date: null })).toBe(false);
 	});
 });

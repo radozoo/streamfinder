@@ -4,6 +4,7 @@
 	import { platformColor } from '$lib/platforms';
 	import FavoriteButton from './FavoriteButton.svelte';
 	import { ratingColor } from '$lib/format';
+	import { firstRelease, isPlanned } from '$lib/releases';
 
 	// A card is always a link to the title's own page. It used to switch to a
 	// <button> opening a modal whenever an `onclick` was passed, which meant the
@@ -11,12 +12,25 @@
 	// page from the home rails, a modal from Katalóg and Kalendár.
 	let {
 		title,
-		serialTitle
+		serialTitle,
+		plannedBadge = true
 	}: {
 		title: TitleIndex;
 		/** In the Kalendár, the name of the serial this release belongs to. */
 		serialTitle?: string;
+		/** Off in the Kalendár, whose day header already says when it comes out. */
+		plannedBadge?: boolean;
 	} = $props();
+
+	// Announced, not watchable yet. The chip carries the date, because "coming" alone
+	// is the first thing anyone then wants to know more about.
+	let planned = $derived(plannedBadge && isPlanned(title));
+	let plannedDate = $derived.by(() => {
+		if (!planned) return null;
+		const [y, m, d] = firstRelease(title)!.split('-').map(Number);
+		const short = `${d}. ${m}.`;
+		return { short: y === new Date().getFullYear() ? short : `${short} ${y}`, full: `${short} ${y}` };
+	});
 
 	// title_type is already a display label (film, seriál, pořad, tv film…) — shown as
 	// a badge on every card.
@@ -70,7 +84,16 @@
 		{#if typeLabel}
 			<span class="type-tag">{typeLabel}</span>
 		{/if}
-		{#if title.is_running}
+		{#if plannedDate}
+			<!-- Takes the live badge's corner: a title that is not out yet cannot be running. -->
+			<span class="planned-tag" title="Připravováno — na VOD od {plannedDate.full}">
+				<svg viewBox="0 0 24 24" width="10" height="10" aria-hidden="true">
+					<circle cx="12" cy="12" r="9" />
+					<polyline points="12 7 12 12 15.5 14" />
+				</svg>
+				<span class="sr-only">Připravováno, od </span>{plannedDate.short}
+			</span>
+		{:else if title.is_running}
 			<span class="live-tag">beží</span>
 		{/if}
 		{#if title.platforms.length > 0}
@@ -111,7 +134,7 @@
      HTML and its clicks are unreliable. The wrapper keeps the .poster-card class so
      every existing layout rule (.scroll-row .poster-card sizing, hover, surface)
      applies to the element that actually sits in the grid. -->
-<div class="poster-card">
+<div class="poster-card" class:is-planned={planned}>
 	<a href="{base}/titul/{title.id}/{title.slug}" class="poster-link">
 		{@render cardBody()}
 	</a>
@@ -187,6 +210,53 @@
 		margin-right: 4px;
 		font-size: 0.6em;
 		vertical-align: middle;
+	}
+
+	/* Planned: the Kalendár's "upcoming" blue, so the two pages speak one colour for
+	   "not out yet". The poster is muted too — in a dense grid the chip alone is easy
+	   to miss, a dimmer tile is not. Hover lifts the mute so it still previews well. */
+	.planned-tag {
+		position: absolute;
+		top: 0.5rem;
+		right: 0.5rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 0.62rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+		padding: 3px 7px;
+		border-radius: 999px;
+		background: rgba(8, 14, 30, 0.82);
+		color: #6ea8ff;
+		border: 1px solid rgba(110, 168, 255, 0.45);
+		backdrop-filter: blur(4px);
+		white-space: nowrap;
+	}
+
+	.planned-tag svg {
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2.6;
+		stroke-linecap: round;
+	}
+
+	.is-planned :global(.poster-media img) {
+		filter: saturate(0.35) brightness(0.68);
+		transition: filter 0.2s;
+	}
+
+	.is-planned:hover :global(.poster-media img) {
+		filter: none;
+	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+		white-space: nowrap;
 	}
 
 	.platform-tag,

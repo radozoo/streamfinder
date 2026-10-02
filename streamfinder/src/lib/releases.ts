@@ -44,3 +44,31 @@ export function releaseDates(t: TitleIndex): string[] {
 export function hasRelease(t: TitleIndex): boolean {
 	return Boolean(t.vod_date) || Boolean(t.vod_events?.length);
 }
+
+/** Today as YYYY-MM-DD — the same UTC day the Kalendár splits past from upcoming on. */
+export const todayISO = (): string => new Date().toISOString().slice(0, 10);
+
+/**
+ * The first day this title is (or will be) watchable, or null when it has no date.
+ *
+ * Not `vod_date`: for a running serial that is often the NEXT episode, so it sits in
+ * the future while the show has been streaming for months. The oldest of everything
+ * we know is the honest answer. `first_vod_date` matters on its own because a serial
+ * announced but not yet out can carry it with no `vod_date` at all.
+ */
+export function firstRelease(t: TitleIndex): string | null {
+	let first = t.vod_events?.[0]?.[0] ?? '';
+	for (const d of [t.vod_date, t.first_vod_date]) if (d && (!first || d < first)) first = d;
+	return first || null;
+}
+
+/**
+ * Announced but not out yet: every known release lies after today.
+ *
+ * A title with no date at all is NOT planned — it is just undated (a third of the
+ * catalog), and marking those would bury the real signal.
+ */
+export function isPlanned(t: TitleIndex, today: string = todayISO()): boolean {
+	const first = firstRelease(t);
+	return first !== null && first > today;
+}

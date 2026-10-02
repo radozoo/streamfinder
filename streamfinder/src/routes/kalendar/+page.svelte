@@ -555,6 +555,7 @@
 									{#each run.titles as title (title.id)}
 										<PosterCard
 											{title}
+											plannedBadge={false}
 											serialTitle={title.root_title_id != null
 												? byId.get(title.root_title_id)?.title
 												: undefined}
