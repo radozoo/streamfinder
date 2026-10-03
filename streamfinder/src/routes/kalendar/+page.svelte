@@ -365,11 +365,34 @@
 		}
 	}
 
-	let typeOptions = $derived(
-		['film', 'seriál', 'tv film', 'pořad', 'krátký film'].filter((type) =>
-			data.titles.some((t) => t.title_type === type)
-		)
-	);
+	// Every type that actually has a release, in the timeline's own order and then by
+	// how often it shows up. The Katalog list is hand-picked and has no 'série' or
+	// 'epizoda' — which is most of what lands here on any given day.
+	let typeOptions = $derived.by(() => {
+		const counts = new Map<string, number>();
+		for (const t of data.titles) {
+			if (!t.title_type || !hasRelease(t)) continue;
+			counts.set(t.title_type, (counts.get(t.title_type) ?? 0) + 1);
+		}
+		return [...counts.keys()].sort(
+			(a, b) => (TYPE_RANK[a] ?? 5) - (TYPE_RANK[b] ?? 5) || counts.get(b)! - counts.get(a)!
+		);
+	});
+
+	// One-tap groups over the same `selectedTypes` the Typ dropdown edits, so the URL,
+	// the chips and the dropdown all stay in step. Groups combine (Filmy + Seriály);
+	// a group is lit only when all of its types are picked.
+	const TYPE_PRESETS: { label: string; types: string[] }[] = [
+		{ label: 'Filmy', types: ['film', 'tv film'] },
+		{ label: 'Seriály', types: ['seriál', 'série'] },
+		{ label: 'Epizody', types: ['epizoda'] }
+	];
+	const presetOn = (types: string[]) => types.every((t) => selectedTypes.includes(t));
+	function togglePreset(types: string[]) {
+		selectedTypes = presetOn(types)
+			? selectedTypes.filter((t) => !types.includes(t))
+			: [...new Set([...selectedTypes, ...types])];
+	}
 
 	function toggle(arr: string[], name: string): string[] {
 		return arr.includes(name) ? arr.filter((v) => v !== name) : [...arr, name];
@@ -464,6 +487,22 @@
 		<button class="quick-link" onclick={() => scrollToDate(getWeekStart())}>Tento týden</button>
 		<button class="quick-link" onclick={() => scrollToDate(getWeekStart(1))}>Minulý týden</button>
 		<button class="quick-link" onclick={() => scrollToDate(getMonthStart())}>Tento měsíc</button>
+		<div class="type-presets" role="group" aria-label="Typ titulu">
+			<button
+				class="type-preset"
+				class:active={selectedTypes.length === 0}
+				aria-pressed={selectedTypes.length === 0}
+				onclick={() => (selectedTypes = [])}
+			>Vše</button>
+			{#each TYPE_PRESETS as preset (preset.label)}
+				<button
+					class="type-preset"
+					class:active={presetOn(preset.types)}
+					aria-pressed={presetOn(preset.types)}
+					onclick={() => togglePreset(preset.types)}
+				>{preset.label}</button>
+			{/each}
+		</div>
 	</div>
 
 	<!-- Search + filters — identical to Katalog -->
@@ -686,6 +725,44 @@
 	.quick-link.active {
 		border-color: var(--amber);
 		color: var(--amber);
+	}
+
+	/* Type shortcuts — a segmented control, so it reads as one choice, not four links */
+	.type-presets {
+		display: flex;
+		margin-left: auto;
+		border: 1px solid var(--border);
+		border-radius: var(--radius-sm);
+		overflow: hidden;
+	}
+
+	.type-preset {
+		background: var(--navy-700);
+		border: none;
+		padding: 0.35rem 0.85rem;
+		color: var(--text-secondary);
+		font-size: 0.8rem;
+		cursor: pointer;
+		transition: background 0.15s, color 0.15s;
+	}
+
+	.type-preset + .type-preset {
+		border-left: 1px solid var(--border);
+	}
+
+	.type-preset:hover {
+		color: var(--amber);
+	}
+
+	.type-preset.active {
+		background: var(--amber);
+		color: var(--navy-900);
+	}
+
+	@media (max-width: 640px) {
+		.type-presets {
+			margin-left: 0;
+		}
 	}
 
 	/* Search + filter bar (same as Katalog) */
